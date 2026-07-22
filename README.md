@@ -6,17 +6,33 @@ Worker dedicado ao treinamento controlado da identidade visual. Não substitui o
 
 - `PRIVACY_LORA_ALLOW_TRAINING=false`
 - `PRIVACY_LORA_DRY_RUN_ONLY=true`
+- `PRIVACY_LORA_SMOKE_MODE=false`
 - somente bucket/key privados;
-- valida checksum de cada material e dos nove pesos do modelo-base;
+- valida checksum de cada material e dos nove artefatos do modelo-base;
 - saída privada com `qa_required=true`;
 - nenhum produto é liberado pelo worker.
 
+## Primeiro treino real — D3.6B
+
+A primeira execução real usa contrato `privacy-identity-lora-training-v2` e exige escopo one-shot:
+
+- um `actor_profile_id`;
+- um `training_run_id`;
+- uma janela de expiração curta;
+- exatamente um job;
+- lock persistente no volume `/runpod-volume/privacy-identity-lora/smoke-locks`.
+
+O worker recusa ator, run ou janela divergentes. Depois que o lock do run é reservado, qualquer nova solicitação para o mesmo run é bloqueada, inclusive após reinício do container.
+
 ## Publicação
 
-1. Crie um repositório separado com este diretório.
-2. Publique a imagem no GHCR.
-3. Crie um endpoint RunPod dedicado com volume persistente.
-4. Configure os secrets R2 e HF no endpoint.
-5. Somente após smoke controlado, configure no backend `IDENTITY_LORA_TRAINER_ENDPOINT_ID`, `IDENTITY_LORA_TRAINING_ENABLED=true` e `IDENTITY_LORA_TRAINER_DRY_RUN_ONLY=false`.
+1. Publique a nova imagem no GHCR usando tag imutável `sha-...`.
+2. Atualize o endpoint RunPod dedicado para essa tag.
+3. Mantenha o worker fechado até o backend gerar o escopo exato.
+4. Para o smoke, replique no endpoint as variáveis retornadas pelo comando de armamento D3.6B.
+5. Depois da submissão ou do término, volte o endpoint para:
+   - `PRIVACY_LORA_ALLOW_TRAINING=false`
+   - `PRIVACY_LORA_DRY_RUN_ONLY=true`
+   - `PRIVACY_LORA_SMOKE_MODE=false`
 
-O comando de treinamento segue o contrato oficial do DiffSynth-Studio para Wan2.1-VACE-14B, com dataset interno `video,vace_video,vace_reference_image,prompt` e saída LoRA privada.
+O comando de treinamento segue o contrato do DiffSynth-Studio para Wan2.1-VACE-14B, com dataset interno privado e saída LoRA privada aguardando QA.
