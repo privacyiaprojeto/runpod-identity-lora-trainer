@@ -7,6 +7,19 @@ from pathlib import Path
 
 from .errors import WorkerError
 
+_AUDIO_DEPENDENCY_FAILURE_MARKERS = (
+    "no module named 'librosa'",
+    'no module named "librosa"',
+    "no module named 'soundfile'",
+    'no module named "soundfile"',
+    "no module named 'soxr'",
+    'no module named "soxr"',
+    "no module named 'numba'",
+    'no module named "numba"',
+    "no module named 'scipy'",
+    'no module named "scipy"',
+    "training_runtime_audio_dependency_missing",
+)
 _IMPORT_FAILURE_MARKERS = (
     "importerror:",
     "modulenotfounderror:",
@@ -33,6 +46,12 @@ def build_command(request, settings, dataset_root: Path, metadata_path: Path, mo
 
 def _classify_failure(output_tail: str, return_code: int) -> WorkerError:
     normalized = output_tail.lower()
+    if any(marker in normalized for marker in _AUDIO_DEPENDENCY_FAILURE_MARKERS):
+        return WorkerError(
+            "TRAINING_RUNTIME_AUDIO_DEPENDENCY_MISSING",
+            "O treinamento não iniciou porque uma dependência interna de áudio do DiffSynth está ausente.",
+            retryable=True,
+        )
     if any(marker in normalized for marker in _IMPORT_FAILURE_MARKERS):
         return WorkerError(
             "TRAINING_RUNTIME_IMPORT_FAILED",
@@ -54,7 +73,7 @@ def _classify_failure(output_tail: str, return_code: int) -> WorkerError:
 
 def run_training(command: list[str], output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    tail: deque[str] = deque(maxlen=120)
+    tail: deque[str] = deque(maxlen=160)
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,

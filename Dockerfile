@@ -12,7 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/runpod-volume/huggingface
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git git-lfs ffmpeg ca-certificates \
+    && apt-get install -y --no-install-recommends git git-lfs ffmpeg ca-certificates libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN git clone --filter=blob:none https://github.com/modelscope/DiffSynth-Studio.git /opt/DiffSynth-Studio \

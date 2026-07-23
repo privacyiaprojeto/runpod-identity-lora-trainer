@@ -1,6 +1,18 @@
 from identity_worker.trainer import _classify_failure
 
 
+def test_missing_librosa_has_specific_retryable_code():
+    error = _classify_failure("ModuleNotFoundError: No module named 'librosa'", 1)
+    assert error.code == "TRAINING_RUNTIME_AUDIO_DEPENDENCY_MISSING"
+    assert error.retryable is True
+
+
+def test_missing_soundfile_has_specific_retryable_code():
+    error = _classify_failure("ModuleNotFoundError: No module named 'soundfile'", 1)
+    assert error.code == "TRAINING_RUNTIME_AUDIO_DEPENDENCY_MISSING"
+    assert error.retryable is True
+
+
 def test_import_error_is_retryable_runtime_failure():
     error = _classify_failure("ImportError: cannot import name 'is_offline_mode'", 1)
     assert error.code == "TRAINING_RUNTIME_IMPORT_FAILED"

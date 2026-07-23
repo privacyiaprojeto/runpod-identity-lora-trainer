@@ -44,3 +44,11 @@ O comando de treinamento segue o contrato do DiffSynth-Studio para Wan2.1-VACE-1
 - O handler repete o preflight antes de reservar o lock one-shot, impedindo que incompatibilidade de container consuma a execução controlada.
 - Falhas técnicas são classificadas como recuperáveis, porém nunca geram retry automático.
 - O adapter continua privado e `qa_pending`; nenhuma liberação de produto ocorre no worker.
+
+## D3.6D — Runtime completo e preflight do entrypoint
+
+- O conjunto homologado inclui `librosa`, `soundfile`, `soxr`, `numba` e `scipy`, além de `libsndfile1` no sistema.
+- O build importa o entrypoint oficial `train.py`, valida `WanTrainingModule`/`wan_parser` e executa um probe WAV real de leitura e reamostragem 8 kHz → 16 kHz.
+- O mesmo preflight roda no handler antes da reserva do lock one-shot; runtime incompleto não consome nova execução.
+- Ausência de dependência de áudio recebe código específico `TRAINING_RUNTIME_AUDIO_DEPENDENCY_MISSING`.
+- Nenhum retry é automático, nenhum adapter é aprovado/publicado e todos os produtos permanecem bloqueados até QA.
