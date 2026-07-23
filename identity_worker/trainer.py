@@ -1,25 +1,82 @@
 from __future__ import annotations
-import json, subprocess
+
+import json
+import subprocess
+from collections import deque
 from pathlib import Path
+
 from .errors import WorkerError
 
+_IMPORT_FAILURE_MARKERS = (
+    "importerror:",
+    "modulenotfounderror:",
+    "cannot import name",
+)
+_GPU_OOM_MARKERS = (
+    "cuda out of memory",
+    "outofmemoryerror",
+)
+
+
 def build_command(request, settings, dataset_root: Path, metadata_path: Path, model_paths: list[str], output_dir: Path) -> list[str]:
-    t=request.payload['training']
-    return ['accelerate','launch',str(settings.diffsynth_root/'examples/wanvideo/model_training/train.py'),
-      '--dataset_base_path',str(dataset_root),'--dataset_metadata_path',str(metadata_path),
-      '--data_file_keys','video,vace_video,vace_reference_image','--height',str(t['height']),'--width',str(t['width']),
-      '--num_frames',str(t['num_frames']),'--dataset_repeat',str(t['dataset_repeat']),'--model_paths',json.dumps(model_paths),
-      '--learning_rate',str(t['learning_rate']),'--num_epochs',str(t['num_epochs']),'--remove_prefix_in_ckpt','pipe.vace.',
-      '--output_path',str(output_dir),'--lora_base_model','vace','--lora_target_modules',','.join(t['target_modules']),
-      '--lora_rank',str(t['lora_rank']),'--extra_inputs','vace_video,vace_reference_image','--use_gradient_checkpointing_offload']
+    t = request.payload["training"]
+    return [
+        "accelerate", "launch", str(settings.diffsynth_root / "examples/wanvideo/model_training/train.py"),
+        "--dataset_base_path", str(dataset_root), "--dataset_metadata_path", str(metadata_path),
+        "--data_file_keys", "video,vace_video,vace_reference_image", "--height", str(t["height"]), "--width", str(t["width"]),
+        "--num_frames", str(t["num_frames"]), "--dataset_repeat", str(t["dataset_repeat"]), "--model_paths", json.dumps(model_paths),
+        "--learning_rate", str(t["learning_rate"]), "--num_epochs", str(t["num_epochs"]), "--remove_prefix_in_ckpt", "pipe.vace.",
+        "--output_path", str(output_dir), "--lora_base_model", "vace", "--lora_target_modules", ",".join(t["target_modules"]),
+        "--lora_rank", str(t["lora_rank"]), "--extra_inputs", "vace_video,vace_reference_image", "--use_gradient_checkpointing_offload",
+    ]
+
+
+def _classify_failure(output_tail: str, return_code: int) -> WorkerError:
+    normalized = output_tail.lower()
+    if any(marker in normalized for marker in _IMPORT_FAILURE_MARKERS):
+        return WorkerError(
+            "TRAINING_RUNTIME_IMPORT_FAILED",
+            "O treinamento não iniciou porque o runtime Python está incompatível.",
+            retryable=True,
+        )
+    if any(marker in normalized for marker in _GPU_OOM_MARKERS):
+        return WorkerError(
+            "TRAINING_GPU_OUT_OF_MEMORY",
+            "O treinamento foi interrompido por memória insuficiente na GPU.",
+            retryable=True,
+        )
+    return WorkerError(
+        "DIFFSYNTH_TRAINING_FAILED",
+        f"O treinamento encerrou com código {return_code}.",
+        retryable=True,
+    )
+
 
 def run_training(command: list[str], output_dir: Path) -> Path:
-    output_dir.mkdir(parents=True,exist_ok=True)
-    try:
-        subprocess.run(command,check=True)
-    except subprocess.CalledProcessError as exc:
-        raise WorkerError('DIFFSYNTH_TRAINING_FAILED', f'Treinamento encerrou com código {exc.returncode}.') from exc
-    candidates=sorted(output_dir.rglob('*.safetensors'),key=lambda p:p.stat().st_mtime,reverse=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    tail: deque[str] = deque(maxlen=120)
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        print(line, end="", flush=True)
+        tail.append(line)
+    return_code = process.wait()
+    if return_code != 0:
+        raise _classify_failure("".join(tail), return_code)
+
+    candidates = sorted(output_dir.rglob("*.safetensors"), key=lambda item: item.stat().st_mtime, reverse=True)
     if not candidates:
-        raise WorkerError('ADAPTER_NOT_FOUND','Treinamento terminou sem adapter .safetensors.')
+        raise WorkerError(
+            "ADAPTER_NOT_FOUND",
+            "O treinamento terminou sem produzir o adapter esperado.",
+            retryable=True,
+        )
     return candidates[0]

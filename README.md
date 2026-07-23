@@ -36,3 +36,11 @@ O worker recusa ator, run ou janela divergentes. Depois que o lock do run é res
    - `PRIVACY_LORA_SMOKE_MODE=false`
 
 O comando de treinamento segue o contrato do DiffSynth-Studio para Wan2.1-VACE-14B, com dataset interno privado e saída LoRA privada aguardando QA.
+
+## D3.6C — Runtime lock e falha recuperável
+
+- `transformers`, `huggingface_hub`, `accelerate`, `tokenizers` e `peft` ficam fixados em conjunto compatível.
+- O build executa `pip check` e um preflight real de importação; uma imagem quebrada não é publicada como válida.
+- O handler repete o preflight antes de reservar o lock one-shot, impedindo que incompatibilidade de container consuma a execução controlada.
+- Falhas técnicas são classificadas como recuperáveis, porém nunca geram retry automático.
+- O adapter continua privado e `qa_pending`; nenhuma liberação de produto ocorre no worker.
