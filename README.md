@@ -62,3 +62,11 @@ O comando de treinamento segue o contrato do DiffSynth-Studio para Wan2.1-VACE-1
 - Antes de reservar o lock one-shot, o worker calcula o hash estrutural dos sete shards agrupados com o loader do DiffSynth e exige identificação como `wan_video_vace`.
 - O preflight lê apenas cabeçalhos/chaves dos pesos, não instancia GPU nem carrega o checkpoint completo em memória.
 - Falhas de binding recebem códigos específicos (`TRAINING_MODEL_DETECTION_FAILED` ou `TRAINING_MODEL_PREFLIGHT_FAILED`) e nunca provocam retry automático.
+
+### Isolamento dos testes de contrato (D3.6E v3)
+
+Os módulos puros de binding, hash e classificação não importam `boto3` ou
+`huggingface_hub` no carregamento. Os SDKs de runtime são importados somente
+quando uma operação real de R2/Hugging Face é executada. Assim, o job
+`contract-tests` continua deliberadamente mínimo (`pytest` apenas) e detecta
+acoplamentos indevidos antes do Docker build.

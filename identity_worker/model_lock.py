@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import WorkerError
-from .storage import sha256_file
+from .hashing import sha256_file
 
 _EXPECTED_REPOSITORY = "Wan-AI/Wan2.1-VACE-14B"
 _SHARD_RE = re.compile(r"^diffusion_pytorch_model-(\d{5})-of-00007\.safetensors$")
