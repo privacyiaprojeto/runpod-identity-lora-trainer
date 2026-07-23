@@ -125,6 +125,49 @@ def _probe_audio_operator() -> dict[str, int]:
         ) from exc
 
 
+def _probe_model_loader_contract() -> dict[str, Any]:
+    try:
+        loader = importlib.import_module("diffsynth.core.loader")
+        configs = importlib.import_module("diffsynth.configs")
+        hash_model_file = getattr(loader, "hash_model_file")
+        model_configs = list(getattr(configs, "MODEL_CONFIGS"))
+    except (ImportError, ModuleNotFoundError, AttributeError, TypeError) as exc:
+        raise WorkerError(
+            "TRAINING_MODEL_LOADER_CONTRACT_INVALID",
+            "O runtime do DiffSynth não expõe o contrato homologado de detecção de modelos.",
+            retryable=True,
+        ) from exc
+
+    if not callable(hash_model_file):
+        raise WorkerError(
+            "TRAINING_MODEL_LOADER_CONTRACT_INVALID",
+            "O detector de modelos do DiffSynth não está disponível.",
+            retryable=True,
+        )
+
+    def config_value(item: Any, key: str) -> Any:
+        if isinstance(item, dict):
+            return item.get(key)
+        return getattr(item, key, None)
+
+    registered_names = {
+        str(config_value(item, "model_name") or "").strip()
+        for item in model_configs
+    }
+    if "wan_video_vace" not in registered_names:
+        raise WorkerError(
+            "TRAINING_MODEL_REGISTRY_MISSING_VACE",
+            "O registry do DiffSynth não contém o modelo Wan VACE homologado.",
+            retryable=True,
+        )
+
+    return {
+        "hashModelFile": True,
+        "wanVideoVaceRegistered": True,
+        "groupedPathProbeDeferredToRequest": True,
+        "weightsLoaded": False,
+    }
+
 def inspect_runtime(diffsynth_root: Path | None = None) -> dict[str, Any]:
     versions = {name: _version(name) for name in EXPECTED_VERSIONS}
     mismatches = {
@@ -172,6 +215,9 @@ def inspect_runtime(diffsynth_root: Path | None = None) -> dict[str, Any]:
             "trainingModule": isinstance(getattr(module, "WanTrainingModule", None), type),
         }
         audio_probe = _probe_audio_operator()
+        model_loader_contract = _probe_model_loader_contract()
+    else:
+        model_loader_contract = None
 
     return {
         "status": "IDENTITY_LORA_TRAINING_RUNTIME_READY",
@@ -179,6 +225,7 @@ def inspect_runtime(diffsynth_root: Path | None = None) -> dict[str, Any]:
         "trainingScript": str(training_script) if training_script else None,
         "entrypoint": entrypoint,
         "audioProbe": audio_probe,
+        "modelLoaderContract": model_loader_contract,
     }
 
 

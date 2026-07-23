@@ -33,10 +33,12 @@ def test_runtime_preflight_accepts_complete_runtime(monkeypatch, tmp_path: Path)
     })
     monkeypatch.setattr(runtime_preflight, "_load_training_entrypoint", lambda path: SimpleNamespace(wan_parser=lambda: None, WanTrainingModule=type("WanTrainingModule", (), {})))
     monkeypatch.setattr(runtime_preflight, "_probe_audio_operator", lambda: {"sourceRate": 8000, "targetRate": 16000, "sampleCount": 320})
+    monkeypatch.setattr(runtime_preflight, "_probe_model_loader_contract", lambda: {"hashModelFile": True, "wanVideoVaceRegistered": True, "groupedPathProbeDeferredToRequest": True, "weightsLoaded": False})
     result = runtime_preflight.inspect_runtime(tmp_path)
     assert result["status"] == "IDENTITY_LORA_TRAINING_RUNTIME_READY"
     assert result["entrypoint"]["wanParser"] is True
     assert result["audioProbe"]["sampleCount"] == 320
+    assert result["modelLoaderContract"]["wanVideoVaceRegistered"] is True
 
 
 def test_runtime_preflight_rejects_version_drift(monkeypatch):
@@ -89,3 +91,30 @@ def test_audio_probe_failure_is_fail_closed(monkeypatch, tmp_path: Path):
     with pytest.raises(WorkerError) as captured:
         runtime_preflight.inspect_runtime(tmp_path)
     assert captured.value.code == "TRAINING_RUNTIME_AUDIO_PROBE_FAILED"
+
+
+def test_model_loader_contract_requires_vace_registry(monkeypatch):
+    def fake_import(name):
+        if name == "diffsynth.core.loader":
+            return SimpleNamespace(hash_model_file=lambda paths: "hash")
+        if name == "diffsynth.configs":
+            return SimpleNamespace(MODEL_CONFIGS=[{"model_hash": "x", "model_name": "other"}])
+        raise AssertionError(name)
+    monkeypatch.setattr(runtime_preflight.importlib, "import_module", fake_import)
+    with pytest.raises(WorkerError) as captured:
+        runtime_preflight._probe_model_loader_contract()
+    assert captured.value.code == "TRAINING_MODEL_REGISTRY_MISSING_VACE"
+
+
+def test_model_loader_contract_accepts_registered_vace(monkeypatch):
+    def fake_import(name):
+        if name == "diffsynth.core.loader":
+            return SimpleNamespace(hash_model_file=lambda paths: "hash")
+        if name == "diffsynth.configs":
+            return SimpleNamespace(MODEL_CONFIGS=[{"model_hash": "hash", "model_name": "wan_video_vace"}])
+        raise AssertionError(name)
+    monkeypatch.setattr(runtime_preflight.importlib, "import_module", fake_import)
+    result = runtime_preflight._probe_model_loader_contract()
+    assert result["hashModelFile"] is True
+    assert result["wanVideoVaceRegistered"] is True
+    assert result["weightsLoaded"] is False

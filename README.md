@@ -52,3 +52,13 @@ O comando de treinamento segue o contrato do DiffSynth-Studio para Wan2.1-VACE-1
 - O mesmo preflight roda no handler antes da reserva do lock one-shot; runtime incompleto não consome nova execução.
 - Ausência de dependência de áudio recebe código específico `TRAINING_RUNTIME_AUDIO_DEPENDENCY_MISSING`.
 - Nenhum retry é automático, nenhum adapter é aprovado/publicado e todos os produtos permanecem bloqueados até QA.
+
+## D3.6E — Model binding agrupado e preflight do loader
+
+- Os sete shards `diffusion_pytorch_model-00001..00007-of-00007.safetensors` são apresentados ao DiffSynth como **um único componente agrupado** em `--model_paths`.
+- O text encoder e o VAE permanecem componentes separados, preservando o contrato oficial do `WanVideoPipeline`.
+- O worker aceita somente `Wan-AI/Wan2.1-VACE-14B`, a revisão congelada recebida no run e os nove artefatos já aprovados pelo backend.
+- Todos os artefatos devem existir no cache privado; `local_files_only=true` impede fallback silencioso para revisão remota ou download durante o smoke.
+- Antes de reservar o lock one-shot, o worker calcula o hash estrutural dos sete shards agrupados com o loader do DiffSynth e exige identificação como `wan_video_vace`.
+- O preflight lê apenas cabeçalhos/chaves dos pesos, não instancia GPU nem carrega o checkpoint completo em memória.
+- Falhas de binding recebem códigos específicos (`TRAINING_MODEL_DETECTION_FAILED` ou `TRAINING_MODEL_PREFLIGHT_FAILED`) e nunca provocam retry automático.

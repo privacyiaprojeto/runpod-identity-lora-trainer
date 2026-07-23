@@ -11,6 +11,7 @@ from identity_worker.contracts import CONTRACT_VERSION, parse_training_request
 from identity_worker.dataset import materialize_dataset
 from identity_worker.errors import WorkerError
 from identity_worker.model_lock import materialize_model
+from identity_worker.model_preflight import assert_model_binding_compatible
 from identity_worker.one_shot import reserve_one_shot, update_one_shot
 from identity_worker.runtime_preflight import assert_runtime_compatible
 from identity_worker.storage import client as r2_client, upload_private
@@ -44,12 +45,21 @@ def handler(event):
                 if sample[field]["bucket"] != settings.r2_bucket_name:
                     raise WorkerError("SOURCE_BUCKET_MISMATCH", "O material não pertence ao bucket privado configurado.")
 
-        # Fail before consuming the persistent one-shot lock when the container is broken.
+        # Runtime and request-specific model binding must pass before the one-shot lock is consumed.
         runtime = assert_runtime_compatible(settings.diffsynth_root)
         log_event(
             "identity_training_runtime_ready",
             request_id=request.request_id,
             versions=runtime["versions"],
+        )
+        model_binding = materialize_model(request, settings)
+        model_probe = assert_model_binding_compatible(model_binding)
+        log_event(
+            "identity_training_model_binding_ready",
+            request_id=request.request_id,
+            model_name=model_probe["modelName"],
+            model_hash=model_probe["modelHash"],
+            diffusion_shard_count=model_probe["diffusionShardCount"],
         )
 
         lock_path = reserve_one_shot(
@@ -70,12 +80,10 @@ def handler(event):
             s3 = r2_client(settings)
             update_one_shot(lock_path, "materializing_dataset")
             dataset_root, metadata_path = materialize_dataset(request, settings, work, s3)
-            update_one_shot(lock_path, "materializing_model")
-            model_paths = materialize_model(request, settings)
             output_dir = work / "output"
             update_one_shot(lock_path, "training")
             adapter = run_training(
-                build_command(request, settings, dataset_root, metadata_path, model_paths, output_dir),
+                build_command(request, settings, dataset_root, metadata_path, model_binding, output_dir),
                 output_dir,
             )
             key = f"{request.output_prefix.rstrip('/')}/{uuid.uuid4().hex}/{adapter.name}"
@@ -105,6 +113,7 @@ def handler(event):
                         "model_revision": request.payload["model"]["revision"],
                         "training_profile": request.payload["training"]["profile"],
                         "one_shot_smoke": True,
+                        "grouped_model_binding": True,
                     },
                 },
             }
