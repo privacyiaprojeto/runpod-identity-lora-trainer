@@ -37,6 +37,9 @@ class Settings:
     preview_training_run_id: str = _text('PRIVACY_LORA_PREVIEW_TRAINING_RUN_ID')
     preview_adapter_id: str = _text('PRIVACY_LORA_PREVIEW_ADAPTER_ID')
     preview_expires_at: str = _text('PRIVACY_LORA_PREVIEW_EXPIRES_AT')
+    preview_recovery_enabled: bool = _bool('PRIVACY_LORA_PREVIEW_RECOVERY_ENABLED', False)
+    preview_recovery_required_error_code: str = _text('PRIVACY_LORA_PREVIEW_RECOVERY_REQUIRED_ERROR_CODE', 'PREVIEW_INFERENCE_FAILED')
+    preview_recovery_max_attempts: int = int(_text('PRIVACY_LORA_PREVIEW_RECOVERY_MAX_ATTEMPTS', '0') or '0')
 
     @property
     def r2_endpoint_url(self) -> str:
@@ -78,6 +81,13 @@ class Settings:
         expiry = self.preview_expiry()
         if not expiry or expiry <= datetime.now(timezone.utc):
             raise WorkerError('PREVIEW_WINDOW_EXPIRED', 'A janela controlada da prévia expirou.')
+        if self.preview_recovery_enabled:
+            if self.preview_recovery_required_error_code != 'PREVIEW_INFERENCE_FAILED':
+                raise WorkerError('PREVIEW_RECOVERY_ERROR_CODE_INVALID', 'A recuperação só pode aceitar a falha técnica homologada da prévia.')
+            if self.preview_recovery_max_attempts != 1:
+                raise WorkerError('PREVIEW_RECOVERY_LIMIT_INVALID', 'A recuperação controlada deve permitir exatamente uma tentativa adicional.')
+        elif self.preview_recovery_max_attempts != 0:
+            raise WorkerError('PREVIEW_RECOVERY_NOT_ARMED', 'O limite de recuperação não pode ser aberto sem o gate explícito.')
         if not all([self.r2_account_id, self.r2_access_key_id, self.r2_secret_access_key, self.r2_bucket_name]):
             raise WorkerError('R2_PRIVATE_CONFIG_MISSING', 'Credenciais privadas do R2 não configuradas.')
         self.runtime_root.mkdir(parents=True, exist_ok=True)

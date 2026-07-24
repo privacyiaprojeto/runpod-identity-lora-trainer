@@ -124,6 +124,11 @@ def test_model_loader_contract_accepts_registered_vace(monkeypatch):
 
 
 def test_preview_runtime_contract_accepts_required_api(monkeypatch):
+    class StrictModelConfig:
+        def __init__(self, *, model_id, origin_file_pattern):
+            self.model_id = model_id
+            self.origin_file_pattern = origin_file_pattern
+
     class FakePipeline:
         @staticmethod
         def from_pretrained():
@@ -141,7 +146,7 @@ def test_preview_runtime_contract_accepts_required_api(monkeypatch):
         if name == "PIL.Image":
             return SimpleNamespace(open=lambda path: None)
         if name == "diffsynth.pipelines.wan_video":
-            return SimpleNamespace(WanVideoPipeline=FakePipeline, ModelConfig=lambda *args, **kwargs: None)
+            return SimpleNamespace(WanVideoPipeline=FakePipeline, ModelConfig=StrictModelConfig)
         if name == "diffsynth.utils.data":
             return SimpleNamespace(VideoData=lambda *args, **kwargs: [], save_video=lambda *args, **kwargs: None)
         raise AssertionError(name)
@@ -152,6 +157,9 @@ def test_preview_runtime_contract_accepts_required_api(monkeypatch):
     assert result["ffmpeg"] is True
     assert result["vaceInputs"] is True
     assert result["loraLoader"] is True
+    assert result["modelConfigSignatureValidated"] is True
+    assert result["tokenizerConfigInstantiated"] is True
+    assert result["tokenizerRevisionArgumentUsed"] is False
     assert result["weightsLoaded"] is False
     assert result["gpuStarted"] is False
 
@@ -184,3 +192,37 @@ def test_preview_runtime_contract_rejects_missing_vace_parameter(monkeypatch):
     with pytest.raises(WorkerError) as captured:
         runtime_preflight._probe_preview_runtime_contract()
     assert captured.value.code == "PREVIEW_RUNTIME_PIPELINE_INCOMPATIBLE"
+
+
+def test_preview_runtime_contract_rejects_incompatible_model_config(monkeypatch):
+    class IncompatibleModelConfig:
+        def __init__(self, *, model_id):
+            self.model_id = model_id
+
+    class FakePipeline:
+        @staticmethod
+        def from_pretrained():
+            return None
+
+        def load_lora(self):
+            return None
+
+        def __call__(self, vace_video=None, vace_reference_image=None, vace_scale=1.0, height=480, width=832, num_frames=17, num_inference_steps=20, seed=0, tiled=True):
+            return []
+
+    def fake_import(name):
+        if name == "torch":
+            return SimpleNamespace(bfloat16=object())
+        if name == "PIL.Image":
+            return SimpleNamespace(open=lambda path: None)
+        if name == "diffsynth.pipelines.wan_video":
+            return SimpleNamespace(WanVideoPipeline=FakePipeline, ModelConfig=IncompatibleModelConfig)
+        if name == "diffsynth.utils.data":
+            return SimpleNamespace(VideoData=lambda *args, **kwargs: [], save_video=lambda *args, **kwargs: None)
+        raise AssertionError(name)
+
+    monkeypatch.setattr(runtime_preflight.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(runtime_preflight.importlib, "import_module", fake_import)
+    with pytest.raises(WorkerError) as captured:
+        runtime_preflight._probe_preview_runtime_contract()
+    assert captured.value.code == "PREVIEW_RUNTIME_MODEL_CONFIG_INCOMPATIBLE"

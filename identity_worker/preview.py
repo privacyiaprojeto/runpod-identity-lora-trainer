@@ -9,6 +9,9 @@ from .errors import WorkerError
 from .storage import download_private
 
 
+TOKENIZER_ORIGIN_FILE_PATTERN = 'google/umt5-xxl/'
+
+
 def materialize_preview_inputs(request, work_dir: Path, s3) -> dict[str, Path]:
     adapter = request.payload['adapter']
     source = request.payload['source']
@@ -53,6 +56,23 @@ def _prepare_reference_image(source: Path, destination: Path, width: int, height
     if not destination.is_file() or destination.stat().st_size <= 0:
         raise WorkerError('PREVIEW_REFERENCE_IMAGE_EMPTY', 'A foto de referência da prévia ficou vazia.')
     return destination
+
+
+def build_tokenizer_config(ModelConfig, repository: str):
+    model_id = str(repository or '').strip()
+    if not model_id:
+        raise WorkerError('PREVIEW_TOKENIZER_MODEL_ID_MISSING', 'O modelo-base da prévia não informou um repositório válido.', retryable=False)
+    try:
+        return ModelConfig(
+            model_id=model_id,
+            origin_file_pattern=TOKENIZER_ORIGIN_FILE_PATTERN,
+        )
+    except TypeError as exc:
+        raise WorkerError(
+            'PREVIEW_TOKENIZER_CONFIG_INCOMPATIBLE',
+            'O DiffSynth instalado não aceita o contrato homologado do tokenizer da prévia.',
+            retryable=False,
+        ) from exc
 
 
 def _local_model_config(ModelConfig, value: Any, **kwargs):
@@ -107,11 +127,7 @@ def run_preview(request, settings, model_binding, inputs: dict[str, Path], work_
             _local_model_config(ModelConfig, model_binding.text_encoder_path, **vram_config),
             _local_model_config(ModelConfig, model_binding.vae_path, **vram_config),
         ]
-        tokenizer_config = ModelConfig(
-            model_id=model_binding.repository,
-            origin_file_pattern='google/umt5-xxl/',
-            revision=model_binding.revision,
-        )
+        tokenizer_config = build_tokenizer_config(ModelConfig, model_binding.repository)
         pipe = WanVideoPipeline.from_pretrained(
             torch_dtype=torch.bfloat16,
             device='cuda',

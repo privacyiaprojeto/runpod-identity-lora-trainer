@@ -14,6 +14,7 @@ from types import ModuleType
 from typing import Any
 
 from .errors import WorkerError
+from .preview import build_tokenizer_config
 
 EXPECTED_VERSIONS = {
     "transformers": "4.56.2",
@@ -223,6 +224,25 @@ def _probe_preview_runtime_contract() -> dict[str, Any]:
             "O runtime de vídeo da prévia está incompleto.",
             retryable=True,
         )
+    try:
+        model_config_signature = inspect.signature(model_config)
+        model_config_signature.bind(
+            model_id="privacy-identity-preflight/model",
+            origin_file_pattern="google/umt5-xxl/",
+        )
+        tokenizer_config = build_tokenizer_config(model_config, "privacy-identity-preflight/model")
+    except (TypeError, ValueError, WorkerError) as exc:
+        raise WorkerError(
+            "PREVIEW_RUNTIME_MODEL_CONFIG_INCOMPATIBLE",
+            "A assinatura real do ModelConfig não aceita o contrato homologado do tokenizer da prévia.",
+            retryable=True,
+        ) from exc
+    if tokenizer_config is None:
+        raise WorkerError(
+            "PREVIEW_RUNTIME_MODEL_CONFIG_INCOMPATIBLE",
+            "O ModelConfig não produziu uma configuração válida para o tokenizer da prévia.",
+            retryable=True,
+        )
     if not hasattr(torch, "bfloat16") or not callable(getattr(pil_image, "open", None)):
         raise WorkerError(
             "PREVIEW_RUNTIME_CORE_API_INVALID",
@@ -236,6 +256,9 @@ def _probe_preview_runtime_contract() -> dict[str, Any]:
         "loraLoader": True,
         "videoData": True,
         "saveVideo": True,
+        "modelConfigSignatureValidated": True,
+        "tokenizerConfigInstantiated": True,
+        "tokenizerRevisionArgumentUsed": False,
         "weightsLoaded": False,
         "gpuStarted": False,
     }

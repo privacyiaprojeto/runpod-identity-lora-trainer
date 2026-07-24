@@ -140,7 +140,16 @@ def _handle_preview(event):
         model_probe = assert_model_binding_compatible(model_binding)
         log_event('identity_preview_model_ready', request_id=request.request_id, model_name=model_probe['modelName'], model_hash=model_probe['modelHash'])
 
-        lock_path = reserve_preview_one_shot(settings.preview_lock_root, request.actor_profile_id, request.training_run_id, request.adapter_id, request.request_id)
+        lock_path = reserve_preview_one_shot(
+            settings.preview_lock_root,
+            request.actor_profile_id,
+            request.training_run_id,
+            request.adapter_id,
+            request.request_id,
+            recovery_enabled=settings.preview_recovery_enabled,
+            recovery_required_error_code=settings.preview_recovery_required_error_code,
+            recovery_max_attempts=settings.preview_recovery_max_attempts,
+        )
         with tempfile.TemporaryDirectory(dir=str(settings.runtime_root), prefix=f'preview_{request.adapter_id}_') as temp:
             work = Path(temp)
             s3 = r2_client(settings)
