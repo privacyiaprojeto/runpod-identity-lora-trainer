@@ -31,6 +31,12 @@ class Settings:
     runtime_root: Path = Path(_text('RUNTIME_ROOT', '/runpod-volume/privacy-identity-lora'))
     model_cache_root: Path = Path(_text('MODEL_CACHE_ROOT', '/runpod-volume/models/identity-lora'))
     diffsynth_root: Path = Path(_text('DIFFSYNTH_ROOT', '/opt/DiffSynth-Studio'))
+    allow_preview: bool = _bool('PRIVACY_LORA_ALLOW_PREVIEW', False)
+    preview_mode: bool = _bool('PRIVACY_LORA_PREVIEW_MODE', False)
+    preview_actor_profile_id: str = _text('PRIVACY_LORA_PREVIEW_ACTOR_PROFILE_ID')
+    preview_training_run_id: str = _text('PRIVACY_LORA_PREVIEW_TRAINING_RUN_ID')
+    preview_adapter_id: str = _text('PRIVACY_LORA_PREVIEW_ADAPTER_ID')
+    preview_expires_at: str = _text('PRIVACY_LORA_PREVIEW_EXPIRES_AT')
 
     @property
     def r2_endpoint_url(self) -> str:
@@ -49,6 +55,34 @@ class Settings:
             return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
         except ValueError:
             return None
+
+    @property
+    def preview_lock_root(self) -> Path:
+        return self.runtime_root / 'preview-locks'
+
+    def preview_expiry(self) -> datetime | None:
+        if not self.preview_expires_at:
+            return None
+        try:
+            value = self.preview_expires_at.replace('Z', '+00:00')
+            parsed = datetime.fromisoformat(value)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+
+    def validate_preview_runtime(self) -> None:
+        if not self.allow_preview or not self.preview_mode:
+            raise WorkerError('PREVIEW_DISABLED', 'A geração de prévia permanece desligada por política.')
+        if not self.preview_actor_profile_id or not self.preview_training_run_id or not self.preview_adapter_id:
+            raise WorkerError('PREVIEW_SCOPE_MISSING', 'Ator, run e adapter da prévia não foram configurados.')
+        expiry = self.preview_expiry()
+        if not expiry or expiry <= datetime.now(timezone.utc):
+            raise WorkerError('PREVIEW_WINDOW_EXPIRED', 'A janela controlada da prévia expirou.')
+        if not all([self.r2_account_id, self.r2_access_key_id, self.r2_secret_access_key, self.r2_bucket_name]):
+            raise WorkerError('R2_PRIVATE_CONFIG_MISSING', 'Credenciais privadas do R2 não configuradas.')
+        self.runtime_root.mkdir(parents=True, exist_ok=True)
+        self.model_cache_root.mkdir(parents=True, exist_ok=True)
+        self.preview_lock_root.mkdir(parents=True, exist_ok=True)
 
     def validate_runtime(self) -> None:
         if self.dry_run_only or not self.allow_training:

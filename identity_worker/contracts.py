@@ -94,3 +94,92 @@ def parse_training_request(event: dict[str, Any]) -> TrainingRequest:
     if expected_scope not in f"/{_text(output.get('prefix')).strip('/')}":
         raise WorkerError('OUTPUT_SCOPE_MISMATCH', 'Destino do adapter não está isolado pelo ator e pelo run.')
     return TrainingRequest(payload, _text(payload.get('request_id')), actor_id, run_id, _text(output.get('bucket')), _text(output.get('prefix')), expiry.isoformat())
+
+PREVIEW_CONTRACT_VERSION = 'privacy-identity-lora-review-preview-v1'
+
+@dataclass(frozen=True)
+class PreviewRequest:
+    payload: dict[str, Any]
+    request_id: str
+    actor_profile_id: str
+    training_run_id: str
+    adapter_id: str
+    output_bucket: str
+    output_prefix: str
+    smoke_expires_at: str
+
+
+def parse_preview_request(event: dict[str, Any]) -> PreviewRequest:
+    payload = event.get('input') if isinstance(event.get('input'), dict) else event
+    if payload.get('contract_version') != PREVIEW_CONTRACT_VERSION:
+        raise WorkerError('UNSUPPORTED_PREVIEW_CONTRACT', 'Contrato de prévia incompatível.')
+    if payload.get('execution_mode') != 'controlled_review_preview_smoke':
+        raise WorkerError('INVALID_PREVIEW_MODE', 'Modo de prévia inválido.')
+    request_id = _text(payload.get('request_id'))
+    actor_id = _text(payload.get('actor_profile_id'))
+    run_id = _text(payload.get('training_run_id'))
+    adapter_id = _text(payload.get('adapter_id'))
+    if not request_id:
+        raise WorkerError('PREVIEW_REQUEST_ID_REQUIRED', 'Identificador da prévia ausente.')
+    if not all(UUID_RE.match(value) for value in (actor_id, run_id, adapter_id)):
+        raise WorkerError('INVALID_PREVIEW_SCOPE', 'Ator, run ou adapter inválido.')
+
+    adapter = payload.get('adapter') or {}
+    if not _private_ref(adapter) or not SHA_RE.match(_text(adapter.get('sha256')).lower()) or int(adapter.get('byte_size') or 0) <= 0:
+        raise WorkerError('INVALID_PRIVATE_ADAPTER', 'O adapter privado da prévia é inválido.')
+    source = payload.get('source') or {}
+    for name in ('control_video', 'reference_image'):
+        item = source.get(name) or {}
+        if not _private_ref(item) or not SHA_RE.match(_text(item.get('sha256')).lower()):
+            raise WorkerError('INVALID_PREVIEW_SOURCE', 'A prévia exige vídeo e foto privados com checksum.')
+
+    model = payload.get('model') or {}
+    if not SHA_RE.match(_text(model.get('fingerprint_sha256')).lower()) or len(model.get('artifacts') or []) != 9:
+        raise WorkerError('INVALID_PREVIEW_MODEL_LOCK', 'Lock do modelo-base inválido para a prévia.')
+
+    preview = payload.get('preview') or {}
+    required = {
+        'width': 832,
+        'height': 480,
+        'num_frames': 17,
+        'fps': 15,
+        'one_output': True,
+    }
+    if any(preview.get(key) != expected for key, expected in required.items()):
+        raise WorkerError('INVALID_PREVIEW_PROFILE', 'A prévia deve usar o perfil curto homologado.')
+    if int(preview.get('num_inference_steps') or 0) < 8 or int(preview.get('num_inference_steps') or 0) > 30:
+        raise WorkerError('INVALID_PREVIEW_STEPS', 'Quantidade de passos da prévia fora do limite seguro.')
+    if not (0.1 <= float(preview.get('lora_strength') or 0) <= 1.2):
+        raise WorkerError('INVALID_PREVIEW_STRENGTH', 'Força do adapter fora do limite seguro.')
+
+    safety = payload.get('safety') or {}
+    required_safety = {
+        'actor_scoped': True,
+        'run_scoped': True,
+        'adapter_scoped': True,
+        'private_storage_only': True,
+        'public_urls_forbidden': True,
+        'product_release_allowed': False,
+        'automatic_retry_allowed': False,
+        'one_shot_smoke': True,
+        'approval_allowed': False,
+    }
+    if any(safety.get(key) is not expected for key, expected in required_safety.items()):
+        raise WorkerError('INVALID_PREVIEW_SAFETY', 'Contrato de segurança da prévia incompleto.')
+
+    smoke = payload.get('smoke') or {}
+    expiry = _parse_expiry(smoke.get('expires_at'))
+    if smoke.get('enabled') is not True or smoke.get('one_shot') is not True or int(smoke.get('max_jobs') or 0) != 1:
+        raise WorkerError('INVALID_PREVIEW_SMOKE', 'A prévia real precisa ser one-shot.')
+    if _text(smoke.get('actor_profile_id')) != actor_id or _text(smoke.get('training_run_id')) != run_id or _text(smoke.get('adapter_id')) != adapter_id:
+        raise WorkerError('PREVIEW_SCOPE_MISMATCH', 'O escopo da prévia não corresponde à autorização.')
+    if not expiry or expiry <= datetime.now(timezone.utc):
+        raise WorkerError('PREVIEW_WINDOW_EXPIRED', 'A janela controlada da prévia expirou.')
+
+    output = payload.get('output') or {}
+    if output.get('public') is not False or _text(output.get('content_type')) != 'video/mp4' or not _text(output.get('bucket')) or not _text(output.get('prefix')):
+        raise WorkerError('PRIVATE_PREVIEW_OUTPUT_REQUIRED', 'Destino privado MP4 obrigatório.')
+    expected_scope = f'/{actor_id}/{run_id}/{adapter_id}'
+    if expected_scope not in f"/{_text(output.get('prefix')).strip('/')}":
+        raise WorkerError('PREVIEW_OUTPUT_SCOPE_MISMATCH', 'Destino da prévia não está isolado por ator, run e adapter.')
+    return PreviewRequest(payload, request_id, actor_id, run_id, adapter_id, _text(output.get('bucket')), _text(output.get('prefix')), expiry.isoformat())

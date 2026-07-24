@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import inspect
+import shutil
 import tempfile
 import wave
 from array import array
@@ -168,6 +170,77 @@ def _probe_model_loader_contract() -> dict[str, Any]:
         "weightsLoaded": False,
     }
 
+def _probe_preview_runtime_contract() -> dict[str, Any]:
+    if not shutil.which("ffmpeg"):
+        raise WorkerError(
+            "PREVIEW_RUNTIME_FFMPEG_MISSING",
+            "O runtime da prévia não contém o ffmpeg obrigatório.",
+            retryable=True,
+        )
+    try:
+        torch = importlib.import_module("torch")
+        pil_image = importlib.import_module("PIL.Image")
+        wan_video = importlib.import_module("diffsynth.pipelines.wan_video")
+        data_utils = importlib.import_module("diffsynth.utils.data")
+        pipeline = getattr(wan_video, "WanVideoPipeline")
+        model_config = getattr(wan_video, "ModelConfig")
+        video_data = getattr(data_utils, "VideoData")
+        save_video = getattr(data_utils, "save_video")
+    except (ImportError, ModuleNotFoundError, AttributeError) as exc:
+        raise WorkerError(
+            "PREVIEW_RUNTIME_CONTRACT_INVALID",
+            "O runtime de inferência não expõe o contrato homologado da prévia privada.",
+            retryable=True,
+        ) from exc
+
+    call_parameters = set(inspect.signature(pipeline.__call__).parameters)
+    required_parameters = {
+        "vace_video",
+        "vace_reference_image",
+        "vace_scale",
+        "height",
+        "width",
+        "num_frames",
+        "num_inference_steps",
+        "seed",
+        "tiled",
+    }
+    if not required_parameters.issubset(call_parameters):
+        raise WorkerError(
+            "PREVIEW_RUNTIME_PIPELINE_INCOMPATIBLE",
+            "O pipeline Wan VACE não contém todos os parâmetros exigidos pela prévia.",
+            retryable=True,
+        )
+    if not callable(getattr(pipeline, "from_pretrained", None)) or not callable(getattr(pipeline, "load_lora", None)):
+        raise WorkerError(
+            "PREVIEW_RUNTIME_LORA_LOADER_MISSING",
+            "O pipeline não contém o carregador de identidade exigido pela prévia.",
+            retryable=True,
+        )
+    if not all(callable(value) for value in (model_config, video_data, save_video)):
+        raise WorkerError(
+            "PREVIEW_RUNTIME_DATA_API_INVALID",
+            "O runtime de vídeo da prévia está incompleto.",
+            retryable=True,
+        )
+    if not hasattr(torch, "bfloat16") or not callable(getattr(pil_image, "open", None)):
+        raise WorkerError(
+            "PREVIEW_RUNTIME_CORE_API_INVALID",
+            "O runtime base da prévia está incompatível.",
+            retryable=True,
+        )
+    return {
+        "ffmpeg": True,
+        "wanVideoPipeline": True,
+        "vaceInputs": True,
+        "loraLoader": True,
+        "videoData": True,
+        "saveVideo": True,
+        "weightsLoaded": False,
+        "gpuStarted": False,
+    }
+
+
 def inspect_runtime(diffsynth_root: Path | None = None) -> dict[str, Any]:
     versions = {name: _version(name) for name in EXPECTED_VERSIONS}
     mismatches = {
@@ -216,8 +289,10 @@ def inspect_runtime(diffsynth_root: Path | None = None) -> dict[str, Any]:
         }
         audio_probe = _probe_audio_operator()
         model_loader_contract = _probe_model_loader_contract()
+        preview_runtime_contract = _probe_preview_runtime_contract()
     else:
         model_loader_contract = None
+        preview_runtime_contract = None
 
     return {
         "status": "IDENTITY_LORA_TRAINING_RUNTIME_READY",
@@ -226,6 +301,7 @@ def inspect_runtime(diffsynth_root: Path | None = None) -> dict[str, Any]:
         "entrypoint": entrypoint,
         "audioProbe": audio_probe,
         "modelLoaderContract": model_loader_contract,
+        "previewRuntimeContract": preview_runtime_contract,
     }
 
 

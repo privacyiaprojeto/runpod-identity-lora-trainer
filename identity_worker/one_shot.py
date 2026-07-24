@@ -41,3 +41,24 @@ def update_one_shot(lock_path: Path, status: str, **fields) -> None:
     temporary = lock_path.with_suffix('.tmp')
     temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
     temporary.replace(lock_path)
+
+
+def reserve_preview_one_shot(lock_root: Path, actor_profile_id: str, training_run_id: str, adapter_id: str, request_id: str) -> Path:
+    lock_root.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_root / f'{adapter_id}.json'
+    payload = {
+        'schemaVersion': 'privacy-identity-lora-preview-lock-v1',
+        'actorProfileId': actor_profile_id,
+        'trainingRunId': training_run_id,
+        'adapterId': adapter_id,
+        'requestId': request_id,
+        'status': 'reserved',
+        'reservedAt': _now(),
+    }
+    try:
+        fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise WorkerError('PREVIEW_ALREADY_CONSUMED', 'Este adapter já consumiu a única prévia autorizada.') from exc
+    with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+    return lock_path

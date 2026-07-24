@@ -26,9 +26,9 @@ def download_private(s3, bucket: str, key: str, destination: Path, expected_sha2
         raise WorkerError('ASSET_CHECKSUM_MISMATCH', f'Checksum divergente: {key}')
     return destination
 
-def upload_private(s3, path: Path, bucket: str, key: str, metadata: dict[str, str]) -> dict:
+def upload_private(s3, path: Path, bucket: str, key: str, metadata: dict[str, str], content_type: str = 'application/octet-stream') -> dict:
     try:
-        s3.upload_file(str(path), bucket, key, ExtraArgs={'ContentType':'application/octet-stream','CacheControl':'private, no-store','Metadata':metadata})
+        s3.upload_file(str(path), bucket, key, ExtraArgs={'ContentType':content_type,'CacheControl':'private, no-store','Metadata':metadata})
     except Exception as exc:
         raise WorkerError('R2_UPLOAD_FAILED', 'Falha ao enviar adapter privado.', retryable=True) from exc
     return {'r2_bucket':bucket,'r2_key':key,'sha256':sha256_file(path),'byte_size':path.stat().st_size}

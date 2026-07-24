@@ -34,11 +34,14 @@ def test_runtime_preflight_accepts_complete_runtime(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(runtime_preflight, "_load_training_entrypoint", lambda path: SimpleNamespace(wan_parser=lambda: None, WanTrainingModule=type("WanTrainingModule", (), {})))
     monkeypatch.setattr(runtime_preflight, "_probe_audio_operator", lambda: {"sourceRate": 8000, "targetRate": 16000, "sampleCount": 320})
     monkeypatch.setattr(runtime_preflight, "_probe_model_loader_contract", lambda: {"hashModelFile": True, "wanVideoVaceRegistered": True, "groupedPathProbeDeferredToRequest": True, "weightsLoaded": False})
+    monkeypatch.setattr(runtime_preflight, "_probe_preview_runtime_contract", lambda: {"ffmpeg": True, "wanVideoPipeline": True, "vaceInputs": True, "loraLoader": True, "weightsLoaded": False, "gpuStarted": False})
     result = runtime_preflight.inspect_runtime(tmp_path)
     assert result["status"] == "IDENTITY_LORA_TRAINING_RUNTIME_READY"
     assert result["entrypoint"]["wanParser"] is True
     assert result["audioProbe"]["sampleCount"] == 320
     assert result["modelLoaderContract"]["wanVideoVaceRegistered"] is True
+    assert result["previewRuntimeContract"]["vaceInputs"] is True
+    assert result["previewRuntimeContract"]["gpuStarted"] is False
 
 
 def test_runtime_preflight_rejects_version_drift(monkeypatch):
@@ -118,3 +121,66 @@ def test_model_loader_contract_accepts_registered_vace(monkeypatch):
     assert result["hashModelFile"] is True
     assert result["wanVideoVaceRegistered"] is True
     assert result["weightsLoaded"] is False
+
+
+def test_preview_runtime_contract_accepts_required_api(monkeypatch):
+    class FakePipeline:
+        @staticmethod
+        def from_pretrained():
+            return None
+
+        def load_lora(self):
+            return None
+
+        def __call__(self, vace_video=None, vace_reference_image=None, vace_scale=1.0, height=480, width=832, num_frames=17, num_inference_steps=20, seed=0, tiled=True):
+            return []
+
+    def fake_import(name):
+        if name == "torch":
+            return SimpleNamespace(bfloat16=object())
+        if name == "PIL.Image":
+            return SimpleNamespace(open=lambda path: None)
+        if name == "diffsynth.pipelines.wan_video":
+            return SimpleNamespace(WanVideoPipeline=FakePipeline, ModelConfig=lambda *args, **kwargs: None)
+        if name == "diffsynth.utils.data":
+            return SimpleNamespace(VideoData=lambda *args, **kwargs: [], save_video=lambda *args, **kwargs: None)
+        raise AssertionError(name)
+
+    monkeypatch.setattr(runtime_preflight.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(runtime_preflight.importlib, "import_module", fake_import)
+    result = runtime_preflight._probe_preview_runtime_contract()
+    assert result["ffmpeg"] is True
+    assert result["vaceInputs"] is True
+    assert result["loraLoader"] is True
+    assert result["weightsLoaded"] is False
+    assert result["gpuStarted"] is False
+
+
+def test_preview_runtime_contract_rejects_missing_vace_parameter(monkeypatch):
+    class FakePipeline:
+        @staticmethod
+        def from_pretrained():
+            return None
+
+        def load_lora(self):
+            return None
+
+        def __call__(self, height=480, width=832):
+            return []
+
+    def fake_import(name):
+        if name == "torch":
+            return SimpleNamespace(bfloat16=object())
+        if name == "PIL.Image":
+            return SimpleNamespace(open=lambda path: None)
+        if name == "diffsynth.pipelines.wan_video":
+            return SimpleNamespace(WanVideoPipeline=FakePipeline, ModelConfig=lambda *args, **kwargs: None)
+        if name == "diffsynth.utils.data":
+            return SimpleNamespace(VideoData=lambda *args, **kwargs: [], save_video=lambda *args, **kwargs: None)
+        raise AssertionError(name)
+
+    monkeypatch.setattr(runtime_preflight.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(runtime_preflight.importlib, "import_module", fake_import)
+    with pytest.raises(WorkerError) as captured:
+        runtime_preflight._probe_preview_runtime_contract()
+    assert captured.value.code == "PREVIEW_RUNTIME_PIPELINE_INCOMPATIBLE"
