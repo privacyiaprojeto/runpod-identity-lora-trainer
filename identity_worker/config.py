@@ -40,6 +40,9 @@ class Settings:
     preview_recovery_enabled: bool = _bool('PRIVACY_LORA_PREVIEW_RECOVERY_ENABLED', False)
     preview_recovery_required_error_code: str = _text('PRIVACY_LORA_PREVIEW_RECOVERY_REQUIRED_ERROR_CODE', 'PREVIEW_INFERENCE_FAILED')
     preview_recovery_max_attempts: int = int(_text('PRIVACY_LORA_PREVIEW_RECOVERY_MAX_ATTEMPTS', '0') or '0')
+    preview_replacement_enabled: bool = _bool('PRIVACY_LORA_PREVIEW_REPLACEMENT_ENABLED', False)
+    preview_replacement_required_reason: str = _text('PRIVACY_LORA_PREVIEW_REPLACEMENT_REQUIRED_REASON', 'PREVIEW_DURATION_TOO_SHORT')
+    preview_replacement_max_attempts: int = int(_text('PRIVACY_LORA_PREVIEW_REPLACEMENT_MAX_ATTEMPTS', '0') or '0')
 
     @property
     def r2_endpoint_url(self) -> str:
@@ -81,6 +84,8 @@ class Settings:
         expiry = self.preview_expiry()
         if not expiry or expiry <= datetime.now(timezone.utc):
             raise WorkerError('PREVIEW_WINDOW_EXPIRED', 'A janela controlada da prévia expirou.')
+        if self.preview_recovery_enabled and self.preview_replacement_enabled:
+            raise WorkerError('PREVIEW_RECOVERY_REPLACEMENT_CONFLICT', 'Recuperação técnica e substituição QA não podem ser abertas juntas.')
         if self.preview_recovery_enabled:
             if self.preview_recovery_required_error_code != 'PREVIEW_INFERENCE_FAILED':
                 raise WorkerError('PREVIEW_RECOVERY_ERROR_CODE_INVALID', 'A recuperação só pode aceitar a falha técnica homologada da prévia.')
@@ -88,6 +93,13 @@ class Settings:
                 raise WorkerError('PREVIEW_RECOVERY_LIMIT_INVALID', 'A recuperação controlada deve permitir exatamente uma tentativa adicional.')
         elif self.preview_recovery_max_attempts != 0:
             raise WorkerError('PREVIEW_RECOVERY_NOT_ARMED', 'O limite de recuperação não pode ser aberto sem o gate explícito.')
+        if self.preview_replacement_enabled:
+            if self.preview_replacement_required_reason != 'PREVIEW_DURATION_TOO_SHORT':
+                raise WorkerError('PREVIEW_REPLACEMENT_REASON_INVALID', 'A substituição QA só pode tratar a duração insuficiente homologada.')
+            if self.preview_replacement_max_attempts != 1:
+                raise WorkerError('PREVIEW_REPLACEMENT_LIMIT_INVALID', 'A substituição QA deve permitir exatamente uma tentativa adicional.')
+        elif self.preview_replacement_max_attempts != 0:
+            raise WorkerError('PREVIEW_REPLACEMENT_NOT_ARMED', 'O limite de substituição não pode ser aberto sem o gate explícito.')
         if not all([self.r2_account_id, self.r2_access_key_id, self.r2_secret_access_key, self.r2_bucket_name]):
             raise WorkerError('R2_PRIVATE_CONFIG_MISSING', 'Credenciais privadas do R2 não configuradas.')
         self.runtime_root.mkdir(parents=True, exist_ok=True)

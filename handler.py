@@ -18,7 +18,7 @@ from identity_worker.errors import WorkerError
 from identity_worker.model_lock import materialize_model
 from identity_worker.model_preflight import assert_model_binding_compatible
 from identity_worker.one_shot import reserve_one_shot, reserve_preview_one_shot, update_one_shot
-from identity_worker.preview import materialize_preview_inputs, run_preview
+from identity_worker.preview import materialize_preview_inputs, run_qa_kit
 from identity_worker.runtime_preflight import assert_runtime_compatible
 from identity_worker.storage import client as r2_client, upload_private
 from identity_worker.telemetry import log_event
@@ -129,58 +129,64 @@ def _handle_preview(event):
         settings.validate_preview_runtime()
         _assert_preview_scope(request)
         if request.output_bucket != settings.r2_bucket_name:
-            raise WorkerError('PREVIEW_OUTPUT_BUCKET_MISMATCH', 'O destino da prévia não corresponde ao bucket privado.')
+            raise WorkerError('PREVIEW_OUTPUT_BUCKET_MISMATCH', 'O destino do kit não corresponde ao bucket privado.')
         for item in (request.payload['adapter'], request.payload['source']['control_video'], request.payload['source']['reference_image']):
             if item['bucket'] != settings.r2_bucket_name:
-                raise WorkerError('PREVIEW_SOURCE_BUCKET_MISMATCH', 'A prévia contém referência fora do bucket privado autorizado.')
+                raise WorkerError('PREVIEW_SOURCE_BUCKET_MISMATCH', 'O kit contém referência fora do bucket privado autorizado.')
 
         runtime = assert_runtime_compatible(settings.diffsynth_root)
-        log_event('identity_preview_runtime_ready', request_id=request.request_id, versions=runtime['versions'])
+        log_event('identity_qa_kit_runtime_ready', request_id=request.request_id, versions=runtime['versions'])
         model_binding = materialize_model(request, settings)
         model_probe = assert_model_binding_compatible(model_binding)
-        log_event('identity_preview_model_ready', request_id=request.request_id, model_name=model_probe['modelName'], model_hash=model_probe['modelHash'])
+        log_event('identity_qa_kit_model_ready', request_id=request.request_id, model_name=model_probe['modelName'], model_hash=model_probe['modelHash'])
 
         lock_path = reserve_preview_one_shot(
-            settings.preview_lock_root,
-            request.actor_profile_id,
-            request.training_run_id,
-            request.adapter_id,
-            request.request_id,
+            settings.preview_lock_root, request.actor_profile_id, request.training_run_id, request.adapter_id, request.request_id,
             recovery_enabled=settings.preview_recovery_enabled,
             recovery_required_error_code=settings.preview_recovery_required_error_code,
             recovery_max_attempts=settings.preview_recovery_max_attempts,
+            replacement_enabled=settings.preview_replacement_enabled,
+            replacement_required_reason=settings.preview_replacement_required_reason,
+            replacement_max_attempts=settings.preview_replacement_max_attempts,
         )
         with tempfile.TemporaryDirectory(dir=str(settings.runtime_root), prefix=f'preview_{request.adapter_id}_') as temp:
             work = Path(temp)
             s3 = r2_client(settings)
             update_one_shot(lock_path, 'materializing_preview_inputs')
             inputs = materialize_preview_inputs(request, work, s3)
-            update_one_shot(lock_path, 'generating_preview')
-            video = run_preview(request, settings, model_binding, inputs, work)
-            key = f"{request.output_prefix.rstrip('/')}/{uuid.uuid4().hex}/identity-review-preview.mp4"
-            update_one_shot(lock_path, 'uploading_preview')
-            uploaded = upload_private(
-                s3, video, request.output_bucket, key,
-                {'private':'true','qa_only':'true','actor_profile_id':request.actor_profile_id,'training_run_id':request.training_run_id,'adapter_id':request.adapter_id,'one_shot_preview':'true'},
-                content_type='video/mp4',
-            )
-            preview = request.payload['preview']
-            update_one_shot(lock_path, 'completed', previewSha256=uploaded['sha256'], previewKey=uploaded['r2_key'])
+            update_one_shot(lock_path, 'generating_qa_kit')
+            generated_assets = run_qa_kit(request, settings, model_binding, inputs, work)
+            update_one_shot(lock_path, 'uploading_qa_kit')
+            uploaded_assets = []
+            batch_id = uuid.uuid4().hex
+            for asset_key, item in generated_assets.items():
+                extension = '.mp4' if item['kind'] == 'video' else '.png'
+                key = f"{request.output_prefix.rstrip('/')}/{batch_id}/{asset_key}{extension}"
+                uploaded = upload_private(
+                    s3, item['path'], request.output_bucket, key,
+                    {'private':'true','qa_only':'true','qa_kit':'true','asset_key':asset_key,'actor_profile_id':request.actor_profile_id,'training_run_id':request.training_run_id,'adapter_id':request.adapter_id,'one_shot_preview':'true'},
+                    content_type=item['content_type'],
+                )
+                uploaded_assets.append({
+                    **uploaded, 'asset_key': asset_key, 'label': item['label'], 'kind': item['kind'],
+                    'content_type': item['content_type'], 'width': item['width'], 'height': item['height'],
+                    'num_frames': item['num_frames'], 'fps': item['fps'], 'duration_seconds': item['duration_seconds'],
+                    'private_only': True, 'approval_allowed': False,
+                })
+            video_asset = next(item for item in uploaded_assets if item['asset_key'] == 'video_walk_turn_smile')
+            update_one_shot(lock_path, 'completed', qaKitAssetCount=len(uploaded_assets), previewSha256=video_asset['sha256'], previewKey=video_asset['r2_key'], previewDurationSeconds=video_asset['duration_seconds'])
             return {
                 'contract_version': PREVIEW_CONTRACT_VERSION,
-                'status': 'preview_completed',
-                'preview': {
-                    **uploaded,
-                    'preview_asset_id': str(uuid.uuid4()),
+                'status': 'qa_kit_completed',
+                'qa_kit': {
+                    'schema_version': 'privacy-identity-qa-kit-v1',
+                    'qa_kit_id': str(uuid.uuid4()),
                     'actor_profile_id': request.actor_profile_id,
                     'training_run_id': request.training_run_id,
                     'adapter_id': request.adapter_id,
-                    'content_type': 'video/mp4',
-                    'width': preview['width'],
-                    'height': preview['height'],
-                    'num_frames': preview['num_frames'],
-                    'fps': preview['fps'],
-                    'duration_seconds': round(preview['num_frames'] / preview['fps'], 3),
+                    'asset_count': len(uploaded_assets),
+                    'assets': uploaded_assets,
+                    'reviewable': video_asset['duration_seconds'] >= 4 and video_asset['num_frames'] >= 49,
                     'private_only': True,
                     'approval_allowed': False,
                 },
@@ -188,14 +194,13 @@ def _handle_preview(event):
     except WorkerError as error:
         if lock_path is not None:
             update_one_shot(lock_path, 'failed', errorCode=error.code, retryable=error.retryable)
-        log_event('identity_preview_failed', request_id=getattr(request, 'request_id', None), error_code=error.code, retryable=error.retryable, one_shot_reserved=lock_path is not None)
+        log_event('identity_qa_kit_failed', request_id=getattr(request, 'request_id', None), error_code=error.code, retryable=error.retryable, one_shot_reserved=lock_path is not None)
         raise RuntimeError(f'{error.code}: {error}') from error
     except Exception as error:
         if lock_path is not None:
             update_one_shot(lock_path, 'failed', errorCode=type(error).__name__, retryable=False)
-        log_event('identity_preview_failed', request_id=getattr(request, 'request_id', None), error_code=type(error).__name__, retryable=False, one_shot_reserved=lock_path is not None)
+        log_event('identity_qa_kit_failed', request_id=getattr(request, 'request_id', None), error_code=type(error).__name__, retryable=False, one_shot_reserved=lock_path is not None)
         raise
-
 
 def handler(event):
     payload = _input_payload(event)

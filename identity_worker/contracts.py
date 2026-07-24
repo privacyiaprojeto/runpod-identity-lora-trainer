@@ -8,6 +8,9 @@ from .errors import WorkerError
 UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', re.I)
 SHA_RE = re.compile(r'^[0-9a-f]{64}$')
 CONTRACT_VERSION = 'privacy-identity-lora-training-v2'
+PREVIEW_CONTRACT_VERSION = 'privacy-identity-lora-review-kit-v2'
+PREVIEW_VIDEO_KEY = 'video_walk_turn_smile'
+PREVIEW_IMAGE_KEYS = ('image_crying', 'image_sensual', 'image_lollipop')
 
 
 def _text(value: Any) -> str:
@@ -95,7 +98,6 @@ def parse_training_request(event: dict[str, Any]) -> TrainingRequest:
         raise WorkerError('OUTPUT_SCOPE_MISMATCH', 'Destino do adapter não está isolado pelo ator e pelo run.')
     return TrainingRequest(payload, _text(payload.get('request_id')), actor_id, run_id, _text(output.get('bucket')), _text(output.get('prefix')), expiry.isoformat())
 
-PREVIEW_CONTRACT_VERSION = 'privacy-identity-lora-review-preview-v1'
 
 @dataclass(frozen=True)
 class PreviewRequest:
@@ -112,43 +114,49 @@ class PreviewRequest:
 def parse_preview_request(event: dict[str, Any]) -> PreviewRequest:
     payload = event.get('input') if isinstance(event.get('input'), dict) else event
     if payload.get('contract_version') != PREVIEW_CONTRACT_VERSION:
-        raise WorkerError('UNSUPPORTED_PREVIEW_CONTRACT', 'Contrato de prévia incompatível.')
-    if payload.get('execution_mode') != 'controlled_review_preview_smoke':
-        raise WorkerError('INVALID_PREVIEW_MODE', 'Modo de prévia inválido.')
+        raise WorkerError('UNSUPPORTED_PREVIEW_CONTRACT', 'Contrato do kit de validação incompatível.')
+    if payload.get('execution_mode') != 'controlled_identity_qa_kit':
+        raise WorkerError('INVALID_PREVIEW_MODE', 'Modo do kit de validação inválido.')
     request_id = _text(payload.get('request_id'))
     actor_id = _text(payload.get('actor_profile_id'))
     run_id = _text(payload.get('training_run_id'))
     adapter_id = _text(payload.get('adapter_id'))
     if not request_id:
-        raise WorkerError('PREVIEW_REQUEST_ID_REQUIRED', 'Identificador da prévia ausente.')
+        raise WorkerError('PREVIEW_REQUEST_ID_REQUIRED', 'Identificador do kit de validação ausente.')
     if not all(UUID_RE.match(value) for value in (actor_id, run_id, adapter_id)):
         raise WorkerError('INVALID_PREVIEW_SCOPE', 'Ator, run ou adapter inválido.')
 
     adapter = payload.get('adapter') or {}
     if not _private_ref(adapter) or not SHA_RE.match(_text(adapter.get('sha256')).lower()) or int(adapter.get('byte_size') or 0) <= 0:
-        raise WorkerError('INVALID_PRIVATE_ADAPTER', 'O adapter privado da prévia é inválido.')
+        raise WorkerError('INVALID_PRIVATE_ADAPTER', 'O adapter privado do kit é inválido.')
     source = payload.get('source') or {}
     for name in ('control_video', 'reference_image'):
         item = source.get(name) or {}
         if not _private_ref(item) or not SHA_RE.match(_text(item.get('sha256')).lower()):
-            raise WorkerError('INVALID_PREVIEW_SOURCE', 'A prévia exige vídeo e foto privados com checksum.')
+            raise WorkerError('INVALID_PREVIEW_SOURCE', 'O kit exige vídeo e foto privados com checksum.')
 
     model = payload.get('model') or {}
     if not SHA_RE.match(_text(model.get('fingerprint_sha256')).lower()) or len(model.get('artifacts') or []) != 9:
-        raise WorkerError('INVALID_PREVIEW_MODEL_LOCK', 'Lock do modelo-base inválido para a prévia.')
+        raise WorkerError('INVALID_PREVIEW_MODEL_LOCK', 'Lock do modelo-base inválido para o kit.')
 
     preview = payload.get('preview') or {}
-    required = {
-        'width': 832,
-        'height': 480,
-        'num_frames': 17,
-        'fps': 15,
-        'one_output': True,
-    }
-    if any(preview.get(key) != expected for key, expected in required.items()):
-        raise WorkerError('INVALID_PREVIEW_PROFILE', 'A prévia deve usar o perfil curto homologado.')
-    if int(preview.get('num_inference_steps') or 0) < 8 or int(preview.get('num_inference_steps') or 0) > 30:
-        raise WorkerError('INVALID_PREVIEW_STEPS', 'Quantidade de passos da prévia fora do limite seguro.')
+    if preview.get('profile') != 'identity_private_qa_kit_v2' or preview.get('one_qa_kit') is not True or int(preview.get('asset_count') or 0) != 4:
+        raise WorkerError('INVALID_PREVIEW_PROFILE', 'O kit deve usar o perfil universal homologado com quatro evidências.')
+    video = preview.get('video') or {}
+    video_required = {'asset_key': PREVIEW_VIDEO_KEY, 'width': 1024, 'height': 576, 'num_frames': 61, 'fps': 12}
+    if any(video.get(key) != expected for key, expected in video_required.items()):
+        raise WorkerError('INVALID_PREVIEW_VIDEO_PROFILE', 'O vídeo QA deve usar 1024x576, 61 quadros e 12 fps.')
+    if int(video.get('num_inference_steps') or 0) < 20 or int(video.get('num_inference_steps') or 0) > 30:
+        raise WorkerError('INVALID_PREVIEW_STEPS', 'Passos do vídeo QA fora do limite seguro.')
+
+    images = preview.get('images') or []
+    if not isinstance(images, list) or len(images) != 3 or tuple(item.get('asset_key') for item in images) != PREVIEW_IMAGE_KEYS:
+        raise WorkerError('INVALID_PREVIEW_IMAGE_SET', 'O kit deve conter exatamente as três imagens QA homologadas.')
+    for item in images:
+        if item.get('width') != 768 or item.get('height') != 1024 or item.get('num_frames') != 1:
+            raise WorkerError('INVALID_PREVIEW_IMAGE_PROFILE', 'Cada imagem QA deve usar 768x1024 e um quadro.')
+        if int(item.get('num_inference_steps') or 0) < 20 or int(item.get('num_inference_steps') or 0) > 32:
+            raise WorkerError('INVALID_PREVIEW_IMAGE_STEPS', 'Passos da imagem QA fora do limite seguro.')
     if not (0.1 <= float(preview.get('lora_strength') or 0) <= 1.2):
         raise WorkerError('INVALID_PREVIEW_STRENGTH', 'Força do adapter fora do limite seguro.')
 
@@ -163,23 +171,24 @@ def parse_preview_request(event: dict[str, Any]) -> PreviewRequest:
         'automatic_retry_allowed': False,
         'one_shot_smoke': True,
         'approval_allowed': False,
+        'qa_kit_only': True,
     }
     if any(safety.get(key) is not expected for key, expected in required_safety.items()):
-        raise WorkerError('INVALID_PREVIEW_SAFETY', 'Contrato de segurança da prévia incompleto.')
+        raise WorkerError('INVALID_PREVIEW_SAFETY', 'Contrato de segurança do kit incompleto.')
 
     smoke = payload.get('smoke') or {}
     expiry = _parse_expiry(smoke.get('expires_at'))
     if smoke.get('enabled') is not True or smoke.get('one_shot') is not True or int(smoke.get('max_jobs') or 0) != 1:
-        raise WorkerError('INVALID_PREVIEW_SMOKE', 'A prévia real precisa ser one-shot.')
+        raise WorkerError('INVALID_PREVIEW_SMOKE', 'O kit real precisa ser one-shot.')
     if _text(smoke.get('actor_profile_id')) != actor_id or _text(smoke.get('training_run_id')) != run_id or _text(smoke.get('adapter_id')) != adapter_id:
-        raise WorkerError('PREVIEW_SCOPE_MISMATCH', 'O escopo da prévia não corresponde à autorização.')
+        raise WorkerError('PREVIEW_SCOPE_MISMATCH', 'O escopo do kit não corresponde à autorização.')
     if not expiry or expiry <= datetime.now(timezone.utc):
-        raise WorkerError('PREVIEW_WINDOW_EXPIRED', 'A janela controlada da prévia expirou.')
+        raise WorkerError('PREVIEW_WINDOW_EXPIRED', 'A janela controlada do kit expirou.')
 
     output = payload.get('output') or {}
-    if output.get('public') is not False or _text(output.get('content_type')) != 'video/mp4' or not _text(output.get('bucket')) or not _text(output.get('prefix')):
-        raise WorkerError('PRIVATE_PREVIEW_OUTPUT_REQUIRED', 'Destino privado MP4 obrigatório.')
+    if output.get('public') is not False or not _text(output.get('bucket')) or not _text(output.get('prefix')):
+        raise WorkerError('PRIVATE_PREVIEW_OUTPUT_REQUIRED', 'Destino privado obrigatório para o kit.')
     expected_scope = f'/{actor_id}/{run_id}/{adapter_id}'
     if expected_scope not in f"/{_text(output.get('prefix')).strip('/')}":
-        raise WorkerError('PREVIEW_OUTPUT_SCOPE_MISMATCH', 'Destino da prévia não está isolado por ator, run e adapter.')
+        raise WorkerError('PREVIEW_OUTPUT_SCOPE_MISMATCH', 'Destino do kit não está isolado por ator, run e adapter.')
     return PreviewRequest(payload, request_id, actor_id, run_id, adapter_id, _text(output.get('bucket')), _text(output.get('prefix')), expiry.isoformat())
