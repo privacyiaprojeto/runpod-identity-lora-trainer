@@ -11,6 +11,10 @@ CONTRACT_VERSION = 'privacy-identity-lora-training-v2'
 PREVIEW_CONTRACT_VERSION = 'privacy-identity-lora-review-kit-v2'
 PREVIEW_VIDEO_KEY = 'video_walk_turn_smile'
 PREVIEW_IMAGE_KEYS = ('image_crying', 'image_sensual', 'image_lollipop')
+DIT_TRAINING_PROFILE = 'wan_dit_identity_video_poc_v1'
+DIT_TARGET_MODULES = ('cross_attn.q', 'cross_attn.k', 'cross_attn.v', 'cross_attn.o', 'ffn.0', 'ffn.2')
+DIT_OPTIMIZER_STEPS = 800
+DIT_CHECKPOINT_STEPS = (400, 600, 800)
 
 
 def _text(value: Any) -> str:
@@ -70,6 +74,35 @@ def parse_training_request(event: dict[str, Any]) -> TrainingRequest:
     model = payload.get('model') or {}
     if not SHA_RE.match(_text(model.get('fingerprint_sha256')).lower()) or len(model.get('artifacts') or []) != 9:
         raise WorkerError('INVALID_MODEL_LOCK', 'Lock do modelo-base inválido.')
+
+    training = payload.get('training') or {}
+    exact_training = {
+        'profile': DIT_TRAINING_PROFILE,
+        'width': 832,
+        'height': 480,
+        'num_frames': 17,
+        'optimizer_steps': DIT_OPTIMIZER_STEPS,
+        'num_epochs': 1,
+        'learning_rate': 0.00005,
+        'lora_rank': 32,
+        'lora_alpha': 32,
+        'lora_base_model': 'dit',
+        'remove_prefix_in_ckpt': 'pipe.dit.',
+        'vace_frozen': True,
+        'automatic_retry': False,
+    }
+    mismatched = [key for key, expected in exact_training.items() if training.get(key) != expected]
+    if mismatched:
+        raise WorkerError('INVALID_DIT_TRAINING_PROFILE', f"O contrato não corresponde ao POC DiT controlado: {','.join(mismatched)}.")
+    if int(training.get('dataset_repeat') or 0) < 54:
+        raise WorkerError('INSUFFICIENT_TRAINING_ITERATIONS', 'O dataset_repeat não alcança a janela de 800 passos.')
+    if tuple(training.get('checkpoint_steps') or ()) != DIT_CHECKPOINT_STEPS:
+        raise WorkerError('INVALID_CHECKPOINT_PLAN', 'Os checkpoints precisam ser exatamente 400, 600 e 800.')
+    if tuple(training.get('target_modules') or ()) != DIT_TARGET_MODULES:
+        raise WorkerError('INVALID_DIT_TARGET_MODULES', 'Os módulos LoRA não correspondem ao gerador principal Wan DiT.')
+    if any('vace' in _text(item).lower() or 'self_attn' in _text(item).lower() for item in training.get('target_modules') or []):
+        raise WorkerError('FORBIDDEN_TRAINING_TARGET', 'O ramo VACE e a self-attention devem permanecer congelados.')
+
     safety = payload.get('safety') or {}
     required_safety = {
         'actor_scoped': True,

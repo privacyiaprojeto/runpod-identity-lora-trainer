@@ -22,6 +22,7 @@ from identity_worker.preview import materialize_preview_inputs, run_qa_kit
 from identity_worker.runtime_preflight import assert_runtime_compatible
 from identity_worker.storage import client as r2_client, upload_private
 from identity_worker.telemetry import log_event
+from identity_worker.adapter_scope import collect_and_audit_checkpoints
 from identity_worker.trainer import build_command, run_training
 
 settings = Settings()
@@ -84,10 +85,21 @@ def _handle_training(event):
             output_dir = work / 'output'
             update_one_shot(lock_path, 'training')
             adapter = run_training(build_command(request, settings, dataset_root, metadata_path, model_binding, output_dir), output_dir)
-            key = f"{request.output_prefix.rstrip('/')}/{uuid.uuid4().hex}/{adapter.name}"
+            checkpoints = collect_and_audit_checkpoints(output_dir)
+            batch_id = uuid.uuid4().hex
             update_one_shot(lock_path, 'uploading_adapter')
-            uploaded = upload_private(s3, adapter, request.output_bucket, key, {'private':'true','qa_required':'true','actor_profile_id':request.actor_profile_id,'training_run_id':request.training_run_id,'one_shot_smoke':'true'})
-            update_one_shot(lock_path, 'completed', adapterSha256=uploaded['sha256'], adapterKey=uploaded['r2_key'])
+            uploaded_checkpoints = []
+            for checkpoint in checkpoints:
+                checkpoint_path = checkpoint['path']
+                checkpoint_step = checkpoint['step']
+                key = f"{request.output_prefix.rstrip('/')}/{batch_id}/step-{checkpoint_step}.safetensors"
+                uploaded_checkpoint = upload_private(
+                    s3, checkpoint_path, request.output_bucket, key,
+                    {'private':'true','qa_required':'true','actor_profile_id':request.actor_profile_id,'training_run_id':request.training_run_id,'one_shot_smoke':'true','lora_base_model':'dit','checkpoint_step':str(checkpoint_step)},
+                )
+                uploaded_checkpoints.append({**uploaded_checkpoint, 'step': checkpoint_step, 'tensor_count': checkpoint['tensor_count']})
+            uploaded = next(item for item in uploaded_checkpoints if item['step'] == 800)
+            update_one_shot(lock_path, 'completed', adapterSha256=uploaded['sha256'], adapterKey=uploaded['r2_key'], checkpointCount=len(uploaded_checkpoints))
             return {
                 'contract_version': CONTRACT_VERSION,
                 'status': 'training_completed',
@@ -106,6 +118,11 @@ def _handle_training(event):
                         'training_profile': request.payload['training']['profile'],
                         'one_shot_smoke': True,
                         'grouped_model_binding': True,
+                        'lora_base_model': 'dit',
+                        'remove_prefix_in_ckpt': 'pipe.dit.',
+                        'target_modules': request.payload['training']['target_modules'],
+                        'optimizer_steps': 800,
+                        'checkpoints': uploaded_checkpoints,
                     },
                 },
             }

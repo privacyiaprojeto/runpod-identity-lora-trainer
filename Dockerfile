@@ -20,6 +20,10 @@ RUN git clone --filter=blob:none https://github.com/modelscope/DiffSynth-Studio.
     && python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install -e /opt/DiffSynth-Studio
 
+COPY scripts/patch_diffsynth_runner.py /tmp/patch_diffsynth_runner.py
+RUN python /tmp/patch_diffsynth_runner.py --root /opt/DiffSynth-Studio --expected-commit "${DIFFSYNTH_COMMIT}" \
+    && grep -Fq "PRIVACY_WAN_DIT_EXACT_STEP_PATCH_V1" /opt/DiffSynth-Studio/diffsynth/diffusion/runner.py
+
 WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN python -m pip install --upgrade --upgrade-strategy only-if-needed -r /app/requirements.txt \
