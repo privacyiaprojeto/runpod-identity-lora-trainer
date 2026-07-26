@@ -29,7 +29,7 @@ COPY requirements.txt /app/requirements.txt
 RUN python -m pip install --upgrade --upgrade-strategy only-if-needed -r /app/requirements.txt \
     && python -m pip check
 
-RUN python -c "from importlib.metadata import version; actual=version('runpod'); expected='1.11.0'; assert actual == expected, f'runpod sdk mismatch: expected {expected}, got {actual}'; print(f'RUNPOD_SDK_BUILD_OK={actual}')"
+RUN python -c "from importlib.metadata import version; expected={'runpod':'1.11.0','boto3':'1.43.51','requests':'2.34.2'}; actual={name:version(name) for name in expected}; assert actual == expected, f'dependency mismatch: expected {expected}, got {actual}'; print('RUNPOD_DEPENDENCY_BUILD_OK=' + ','.join(f'{name}={value}' for name,value in actual.items()))"
 
 COPY handler.py /app/handler.py
 COPY identity_worker /app/identity_worker

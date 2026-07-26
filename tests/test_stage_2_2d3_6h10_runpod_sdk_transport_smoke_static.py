@@ -14,7 +14,8 @@ def evaluate():
 
     checks = [
         ('runpod_sdk_pinned_1_11_0', 'runpod==1.11.0' in requirements and 'runpod==1.7.13' not in requirements),
-        ('docker_verifies_sdk_version', "RUNPOD_SDK_BUILD_OK" in dockerfile and "expected='1.11.0'" in dockerfile),
+        ('runpod_sdk_dependencies_compatible', 'boto3==1.43.51' in requirements and 'requests==2.34.2' in requirements and 'boto3==1.35.36' not in requirements and 'requests==2.32.3' not in requirements),
+        ('docker_verifies_sdk_version', "RUNPOD_DEPENDENCY_BUILD_OK" in dockerfile and "'runpod':'1.11.0'" in dockerfile and "'boto3':'1.43.51'" in dockerfile and "'requests':'2.34.2'" in dockerfile),
         ('transport_contract_declared', "privacy-identity-lora-transport-smoke-v1" in handler),
         ('transport_disabled_by_default', "PRIVACY_LORA_TRANSPORT_SMOKE_ENABLED', 'false'" in handler),
         ('transport_requires_training_closed', 'TRANSPORT_SMOKE_REQUIRES_TRAINING_CLOSED' in handler),
