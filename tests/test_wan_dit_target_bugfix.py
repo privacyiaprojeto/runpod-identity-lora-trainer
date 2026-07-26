@@ -21,5 +21,5 @@ def test_wan_dit_training_command_targets_generator_not_vace(tmp_path):
     assert "--save_steps 200" in joined
     assert "--lora_base_model vace" not in joined
     assert "pipe.vace." not in joined
-    assert DIT_TRAINING_PROFILE == "wan_dit_identity_video_poc_v1"
+    assert DIT_TRAINING_PROFILE == "wan_dit_identity_video_v1"
     assert DIT_CHECKPOINT_STEPS == (400, 600, 800)

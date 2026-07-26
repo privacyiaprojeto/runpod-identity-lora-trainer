@@ -1,0 +1,63 @@
+schema_version: privacy-wan-dit-lora-poc-config-v1
+purpose: controlled_identity_training_smoke
+runtime:
+  trainer_image: ghcr.io/privacyiaprojeto/runpod-identity-lora-trainer:sha-d7982e8
+  pytorch: "2.8.0"
+  cuda: "12.8"
+  diffsynth_commit: fb337fb
+  gpu_class: BLACKWELL_96
+model:
+  family: Wan2.1
+  base_component: dit
+  motion_guide: vace
+  vace_frozen: true
+lora:
+  rank: 32
+  alpha_contract: 32
+  alpha_runtime_policy: rank_equals_alpha
+  alpha_note: >-
+    The pinned DiffSynth train.py exposes lora_rank but no independent lora_alpha CLI.
+    This POC therefore requires alpha_contract == rank and rejects any divergent value.
+  target_modules:
+    - cross_attn.q
+    - cross_attn.k
+    - cross_attn.v
+    - cross_attn.o
+    - ffn.0
+    - ffn.2
+  forbidden_targets:
+    - vace
+    - vace_blocks
+    - self_attn
+training:
+  width: 832
+  height: 480
+  num_frames: 17
+  dataset_repeat: 60
+  learning_rate: 0.00005
+  optimizer_steps: 800
+  num_epochs: 1
+  checkpoint_steps:
+    - 400
+    - 600
+    - 800
+  save_steps_internal: 200
+  final_checkpoint: 800
+  automatic_retry: false
+output:
+  format: safetensors
+  private_storage_only: true
+  public_urls_forbidden: true
+  qa_required: true
+inference_ab:
+  workflow_id: wan-2.1-v2v-identity-ab-v1
+  seed: 99
+  width: 832
+  height: 480
+  fps: 16
+  frames: 17
+  steps: 30
+  denoise: 1.0
+  lora_strength: 0.65
+  sampler_name: uni_pc
+  scheduler: simple

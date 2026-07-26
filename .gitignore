@@ -1,3 +1,5 @@
 ﻿__pycache__/
 *.py[cod]
 .pytest_cache/
+poc/training_input.local.json
+poc-results/

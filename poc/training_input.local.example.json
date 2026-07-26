@@ -1,0 +1,327 @@
+{
+  "input": {
+    "contract_version": "privacy-identity-lora-training-v2",
+    "execution_mode": "controlled_training_smoke",
+    "request_id": "__AUTO_OR_REPLACE_REQUEST_ID__",
+    "actor_profile_id": "__REPLACE_ACTOR_PROFILE_UUID__",
+    "training_run_id": "__REPLACE_TRAINING_RUN_UUID__",
+    "dataset_manifest_sha256": "__REPLACE_64_HEX_SHA256__",
+    "dataset": {
+      "samples": [
+        {
+          "sample_id": "sample-01",
+          "prompt": "__REPLACE_WITH_ACTOR_TRIGGER_AND_NEUTRAL_CAPTION__",
+          "video_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_VIDEO_KEY_01__"
+          },
+          "video_sha256": "__REPLACE_64_HEX_SHA256__",
+          "reference_image_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_REFERENCE_IMAGE_KEY_01__"
+          },
+          "reference_image_sha256": "__REPLACE_64_HEX_SHA256__"
+        },
+        {
+          "sample_id": "sample-02",
+          "prompt": "__REPLACE_WITH_ACTOR_TRIGGER_AND_NEUTRAL_CAPTION__",
+          "video_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_VIDEO_KEY_02__"
+          },
+          "video_sha256": "__REPLACE_64_HEX_SHA256__",
+          "reference_image_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_REFERENCE_IMAGE_KEY_02__"
+          },
+          "reference_image_sha256": "__REPLACE_64_HEX_SHA256__"
+        },
+        {
+          "sample_id": "sample-03",
+          "prompt": "__REPLACE_WITH_ACTOR_TRIGGER_AND_NEUTRAL_CAPTION__",
+          "video_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_VIDEO_KEY_03__"
+          },
+          "video_sha256": "__REPLACE_64_HEX_SHA256__",
+          "reference_image_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_REFERENCE_IMAGE_KEY_03__"
+          },
+          "reference_image_sha256": "__REPLACE_64_HEX_SHA256__"
+        },
+        {
+          "sample_id": "sample-04",
+          "prompt": "__REPLACE_WITH_ACTOR_TRIGGER_AND_NEUTRAL_CAPTION__",
+          "video_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_VIDEO_KEY_04__"
+          },
+          "video_sha256": "__REPLACE_64_HEX_SHA256__",
+          "reference_image_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_REFERENCE_IMAGE_KEY_04__"
+          },
+          "reference_image_sha256": "__REPLACE_64_HEX_SHA256__"
+        },
+        {
+          "sample_id": "sample-05",
+          "prompt": "__REPLACE_WITH_ACTOR_TRIGGER_AND_NEUTRAL_CAPTION__",
+          "video_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_VIDEO_KEY_05__"
+          },
+          "video_sha256": "__REPLACE_64_HEX_SHA256__",
+          "reference_image_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_REFERENCE_IMAGE_KEY_05__"
+          },
+          "reference_image_sha256": "__REPLACE_64_HEX_SHA256__"
+        },
+        {
+          "sample_id": "sample-06",
+          "prompt": "__REPLACE_WITH_ACTOR_TRIGGER_AND_NEUTRAL_CAPTION__",
+          "video_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_VIDEO_KEY_06__"
+          },
+          "video_sha256": "__REPLACE_64_HEX_SHA256__",
+          "reference_image_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_REFERENCE_IMAGE_KEY_06__"
+          },
+          "reference_image_sha256": "__REPLACE_64_HEX_SHA256__"
+        },
+        {
+          "sample_id": "sample-07",
+          "prompt": "__REPLACE_WITH_ACTOR_TRIGGER_AND_NEUTRAL_CAPTION__",
+          "video_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_VIDEO_KEY_07__"
+          },
+          "video_sha256": "__REPLACE_64_HEX_SHA256__",
+          "reference_image_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_REFERENCE_IMAGE_KEY_07__"
+          },
+          "reference_image_sha256": "__REPLACE_64_HEX_SHA256__"
+        },
+        {
+          "sample_id": "sample-08",
+          "prompt": "__REPLACE_WITH_ACTOR_TRIGGER_AND_NEUTRAL_CAPTION__",
+          "video_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_VIDEO_KEY_08__"
+          },
+          "video_sha256": "__REPLACE_64_HEX_SHA256__",
+          "reference_image_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_REFERENCE_IMAGE_KEY_08__"
+          },
+          "reference_image_sha256": "__REPLACE_64_HEX_SHA256__"
+        },
+        {
+          "sample_id": "sample-09",
+          "prompt": "__REPLACE_WITH_ACTOR_TRIGGER_AND_NEUTRAL_CAPTION__",
+          "video_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_VIDEO_KEY_09__"
+          },
+          "video_sha256": "__REPLACE_64_HEX_SHA256__",
+          "reference_image_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_REFERENCE_IMAGE_KEY_09__"
+          },
+          "reference_image_sha256": "__REPLACE_64_HEX_SHA256__"
+        },
+        {
+          "sample_id": "sample-10",
+          "prompt": "__REPLACE_WITH_ACTOR_TRIGGER_AND_NEUTRAL_CAPTION__",
+          "video_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_VIDEO_KEY_10__"
+          },
+          "video_sha256": "__REPLACE_64_HEX_SHA256__",
+          "reference_image_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_REFERENCE_IMAGE_KEY_10__"
+          },
+          "reference_image_sha256": "__REPLACE_64_HEX_SHA256__"
+        },
+        {
+          "sample_id": "sample-11",
+          "prompt": "__REPLACE_WITH_ACTOR_TRIGGER_AND_NEUTRAL_CAPTION__",
+          "video_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_VIDEO_KEY_11__"
+          },
+          "video_sha256": "__REPLACE_64_HEX_SHA256__",
+          "reference_image_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_REFERENCE_IMAGE_KEY_11__"
+          },
+          "reference_image_sha256": "__REPLACE_64_HEX_SHA256__"
+        },
+        {
+          "sample_id": "sample-12",
+          "prompt": "__REPLACE_WITH_ACTOR_TRIGGER_AND_NEUTRAL_CAPTION__",
+          "video_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_VIDEO_KEY_12__"
+          },
+          "video_sha256": "__REPLACE_64_HEX_SHA256__",
+          "reference_image_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_REFERENCE_IMAGE_KEY_12__"
+          },
+          "reference_image_sha256": "__REPLACE_64_HEX_SHA256__"
+        },
+        {
+          "sample_id": "sample-13",
+          "prompt": "__REPLACE_WITH_ACTOR_TRIGGER_AND_NEUTRAL_CAPTION__",
+          "video_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_VIDEO_KEY_13__"
+          },
+          "video_sha256": "__REPLACE_64_HEX_SHA256__",
+          "reference_image_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_REFERENCE_IMAGE_KEY_13__"
+          },
+          "reference_image_sha256": "__REPLACE_64_HEX_SHA256__"
+        },
+        {
+          "sample_id": "sample-14",
+          "prompt": "__REPLACE_WITH_ACTOR_TRIGGER_AND_NEUTRAL_CAPTION__",
+          "video_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_VIDEO_KEY_14__"
+          },
+          "video_sha256": "__REPLACE_64_HEX_SHA256__",
+          "reference_image_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_REFERENCE_IMAGE_KEY_14__"
+          },
+          "reference_image_sha256": "__REPLACE_64_HEX_SHA256__"
+        },
+        {
+          "sample_id": "sample-15",
+          "prompt": "__REPLACE_WITH_ACTOR_TRIGGER_AND_NEUTRAL_CAPTION__",
+          "video_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_VIDEO_KEY_15__"
+          },
+          "video_sha256": "__REPLACE_64_HEX_SHA256__",
+          "reference_image_source": {
+            "bucket": "privacy-media",
+            "key": "__REPLACE_PRIVATE_REFERENCE_IMAGE_KEY_15__"
+          },
+          "reference_image_sha256": "__REPLACE_64_HEX_SHA256__"
+        }
+      ]
+    },
+    "model": {
+      "name": "Wan2.1-VACE-14B",
+      "revision": "__REPLACE_IMMUTABLE_MODEL_REVISION__",
+      "fingerprint_sha256": "__REPLACE_64_HEX_SHA256__",
+      "artifacts": [
+        {
+          "path": "__REPLACE_PRIVATE_MODEL_PATH__/diffusion_pytorch_model-00001-of-00007.safetensors",
+          "sha256": "__REPLACE_64_HEX_SHA256__",
+          "size": 1
+        },
+        {
+          "path": "__REPLACE_PRIVATE_MODEL_PATH__/diffusion_pytorch_model-00002-of-00007.safetensors",
+          "sha256": "__REPLACE_64_HEX_SHA256__",
+          "size": 1
+        },
+        {
+          "path": "__REPLACE_PRIVATE_MODEL_PATH__/diffusion_pytorch_model-00003-of-00007.safetensors",
+          "sha256": "__REPLACE_64_HEX_SHA256__",
+          "size": 1
+        },
+        {
+          "path": "__REPLACE_PRIVATE_MODEL_PATH__/diffusion_pytorch_model-00004-of-00007.safetensors",
+          "sha256": "__REPLACE_64_HEX_SHA256__",
+          "size": 1
+        },
+        {
+          "path": "__REPLACE_PRIVATE_MODEL_PATH__/diffusion_pytorch_model-00005-of-00007.safetensors",
+          "sha256": "__REPLACE_64_HEX_SHA256__",
+          "size": 1
+        },
+        {
+          "path": "__REPLACE_PRIVATE_MODEL_PATH__/diffusion_pytorch_model-00006-of-00007.safetensors",
+          "sha256": "__REPLACE_64_HEX_SHA256__",
+          "size": 1
+        },
+        {
+          "path": "__REPLACE_PRIVATE_MODEL_PATH__/diffusion_pytorch_model-00007-of-00007.safetensors",
+          "sha256": "__REPLACE_64_HEX_SHA256__",
+          "size": 1
+        },
+        {
+          "path": "__REPLACE_PRIVATE_MODEL_PATH__/models_t5_umt5-xxl-enc-bf16.pth",
+          "sha256": "__REPLACE_64_HEX_SHA256__",
+          "size": 1
+        },
+        {
+          "path": "__REPLACE_PRIVATE_MODEL_PATH__/Wan2.1_VAE.pth",
+          "sha256": "__REPLACE_64_HEX_SHA256__",
+          "size": 1
+        }
+      ]
+    },
+    "training": {
+      "profile": "wan_dit_identity_video_v1",
+      "width": 832,
+      "height": 480,
+      "num_frames": 17,
+      "dataset_repeat": 60,
+      "optimizer_steps": 800,
+      "checkpoint_steps": [
+        400,
+        600,
+        800
+      ],
+      "num_epochs": 1,
+      "learning_rate": 5e-05,
+      "lora_rank": 32,
+      "lora_alpha": 32,
+      "lora_base_model": "dit",
+      "remove_prefix_in_ckpt": "pipe.dit.",
+      "vace_frozen": true,
+      "target_modules": [
+        "cross_attn.q",
+        "cross_attn.k",
+        "cross_attn.v",
+        "cross_attn.o",
+        "ffn.0",
+        "ffn.2"
+      ],
+      "automatic_retry": false
+    },
+    "output": {
+      "bucket": "privacy-media",
+      "prefix": "__REPLACE_OUTPUT_PREFIX_CONTAINING_ACTOR_UUID_AND_RUN_UUID__",
+      "public": false
+    },
+    "smoke": {
+      "enabled": true,
+      "one_shot": true,
+      "actor_profile_id": "__REPLACE_ACTOR_PROFILE_UUID__",
+      "training_run_id": "__REPLACE_TRAINING_RUN_UUID__",
+      "expires_at": "__REPLACE_EXACT_ISO_EXPIRY_MATCHING_RUNPOD_ENV__",
+      "max_jobs": 1
+    },
+    "safety": {
+      "actor_scoped": true,
+      "private_storage_only": true,
+      "public_urls_forbidden": true,
+      "product_release_allowed": false,
+      "inference_injection_allowed": false,
+      "automatic_retry_allowed": false,
+      "one_shot_smoke": true
+    }
+  }
+}
