@@ -70,3 +70,19 @@ Os módulos puros de binding, hash e classificação não importam `boto3` ou
 quando uma operação real de R2/Hugging Face é executada. Assim, o job
 `contract-tests` continua deliberadamente mínimo (`pytest` apenas) e detecta
 acoplamentos indevidos antes do Docker build.
+
+## D3.6H11 — Preflight privado do Cloudflare R2
+
+O contrato `privacy-identity-lora-r2-preflight-v1` valida somente o acesso privado
+aos objetos do dataset por `HeadObject`. Ele permanece desligado por padrão e exige:
+
+- treinamento, preview e transport smoke fechados;
+- ator, run e expiração próprios do preflight;
+- credenciais privadas do R2 configuradas;
+- payload one-shot com referências `bucket/key` privadas do dataset.
+
+O preflight não lista o bucket, não baixa objetos, não carrega modelo, não inicia
+treinamento, não escreve e não apaga dados. O retorno mascara bucket e chaves,
+expondo somente fingerprints, tamanhos e estado opcional do checksum armazenado em
+metadados. Use `scripts/poc/TEST_RUNPOD_R2_PREFLIGHT.ps1` e desarme o gate após a
+execução.

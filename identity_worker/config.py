@@ -26,6 +26,10 @@ class Settings:
     r2_access_key_id: str = _text('R2_ACCESS_KEY_ID')
     r2_secret_access_key: str = _text('R2_SECRET_ACCESS_KEY')
     r2_bucket_name: str = _text('R2_BUCKET_NAME')
+    r2_preflight_enabled: bool = _bool('PRIVACY_LORA_R2_PREFLIGHT_ENABLED', False)
+    r2_preflight_actor_profile_id: str = _text('PRIVACY_LORA_R2_PREFLIGHT_ACTOR_PROFILE_ID')
+    r2_preflight_training_run_id: str = _text('PRIVACY_LORA_R2_PREFLIGHT_TRAINING_RUN_ID')
+    r2_preflight_expires_at: str = _text('PRIVACY_LORA_R2_PREFLIGHT_EXPIRES_AT')
     hf_token: str = _text('HF_TOKEN')
     app_root: Path = Path(_text('APP_ROOT', '/app'))
     runtime_root: Path = Path(_text('RUNTIME_ROOT', '/runpod-volume/privacy-identity-lora'))
@@ -75,6 +79,31 @@ class Settings:
             return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
         except ValueError:
             return None
+
+    def r2_preflight_expiry(self) -> datetime | None:
+        if not self.r2_preflight_expires_at:
+            return None
+        try:
+            value = self.r2_preflight_expires_at.replace('Z', '+00:00')
+            parsed = datetime.fromisoformat(value)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+
+    def validate_r2_preflight_runtime(self) -> None:
+        if not self.r2_preflight_enabled:
+            raise WorkerError('R2_PREFLIGHT_DISABLED', 'O preflight privado do R2 permanece desligado por política.')
+        if self.allow_training or not self.dry_run_only or self.smoke_mode:
+            raise WorkerError('R2_PREFLIGHT_REQUIRES_TRAINING_CLOSED', 'Feche treinamento real e smoke antes do preflight do R2.')
+        if self.allow_preview or self.preview_mode:
+            raise WorkerError('R2_PREFLIGHT_REQUIRES_PREVIEW_CLOSED', 'Feche a prévia antes do preflight do R2.')
+        if not self.r2_preflight_actor_profile_id or not self.r2_preflight_training_run_id:
+            raise WorkerError('R2_PREFLIGHT_SCOPE_MISSING', 'Ator e run do preflight não foram configurados.')
+        expiry = self.r2_preflight_expiry()
+        if not expiry or expiry <= datetime.now(timezone.utc):
+            raise WorkerError('R2_PREFLIGHT_WINDOW_EXPIRED', 'A janela controlada do preflight do R2 expirou.')
+        if not all([self.r2_account_id, self.r2_access_key_id, self.r2_secret_access_key, self.r2_bucket_name]):
+            raise WorkerError('R2_PRIVATE_CONFIG_MISSING', 'Credenciais privadas do R2 não configuradas.')
 
     def validate_preview_runtime(self) -> None:
         if not self.allow_preview or not self.preview_mode:

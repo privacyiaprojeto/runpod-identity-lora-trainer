@@ -14,7 +14,9 @@ from identity_worker.config import Settings
 from identity_worker.contracts import (
     CONTRACT_VERSION,
     PREVIEW_CONTRACT_VERSION,
+    R2_PREFLIGHT_CONTRACT_VERSION,
     parse_preview_request,
+    parse_r2_preflight_request,
     parse_training_request,
 )
 from identity_worker.dataset import materialize_dataset
@@ -24,6 +26,7 @@ from identity_worker.model_preflight import assert_model_binding_compatible
 from identity_worker.one_shot import reserve_one_shot, reserve_preview_one_shot, update_one_shot
 from identity_worker.preview import materialize_preview_inputs, run_qa_kit
 from identity_worker.runtime_preflight import assert_runtime_compatible
+from identity_worker.r2_preflight import probe_private_r2_metadata
 from identity_worker.storage import client as r2_client, upload_private
 from identity_worker.telemetry import log_event
 from identity_worker.adapter_scope import collect_and_audit_checkpoints
@@ -56,6 +59,7 @@ log_event(
     training_smoke_mode=settings.smoke_mode,
     preview_enabled=settings.allow_preview,
     preview_mode=settings.preview_mode,
+    r2_preflight_enabled=settings.r2_preflight_enabled,
 )
 
 
@@ -71,6 +75,16 @@ def _assert_training_scope(request) -> None:
     configured_expiry = settings.smoke_expiry()
     if not configured_expiry or request.smoke_expires_at != configured_expiry.isoformat():
         raise WorkerError('WORKER_SMOKE_EXPIRY_MISMATCH', 'A janela do contrato não corresponde à janela configurada no worker.')
+
+
+def _assert_r2_preflight_scope(request) -> None:
+    if request.actor_profile_id != settings.r2_preflight_actor_profile_id:
+        raise WorkerError('R2_PREFLIGHT_ACTOR_SCOPE_MISMATCH', 'O worker não está autorizado para este ator no preflight do R2.')
+    if request.training_run_id != settings.r2_preflight_training_run_id:
+        raise WorkerError('R2_PREFLIGHT_RUN_SCOPE_MISMATCH', 'O worker não está autorizado para este run no preflight do R2.')
+    configured_expiry = settings.r2_preflight_expiry()
+    if not configured_expiry or request.smoke_expires_at != configured_expiry.isoformat():
+        raise WorkerError('R2_PREFLIGHT_EXPIRY_MISMATCH', 'A janela do preflight não corresponde à configuração do worker.')
 
 
 def _assert_preview_scope(request) -> None:
@@ -250,6 +264,60 @@ def _handle_preview(event):
         log_event('identity_qa_kit_failed', request_id=getattr(request, 'request_id', None), error_code=type(error).__name__, retryable=False, one_shot_reserved=lock_path is not None)
         raise
 
+def _handle_r2_preflight(event):
+    request = None
+    try:
+        request = parse_r2_preflight_request(event)
+        settings.validate_r2_preflight_runtime()
+        if TRANSPORT_SMOKE_ENABLED:
+            raise WorkerError('R2_PREFLIGHT_REQUIRES_TRANSPORT_CLOSED', 'Feche o transport smoke antes do preflight privado do R2.')
+        _assert_r2_preflight_scope(request)
+        if request.bucket != settings.r2_bucket_name:
+            raise WorkerError('R2_PREFLIGHT_CONFIGURED_BUCKET_MISMATCH', 'O bucket do contrato não corresponde ao bucket privado configurado.')
+
+        s3 = r2_client(settings)
+        result = probe_private_r2_metadata(s3, request.bucket, request.objects)
+        log_event(
+            'identity_r2_private_preflight_completed',
+            request_id=request.request_id,
+            actor_profile_id=request.actor_profile_id,
+            training_run_id=request.training_run_id,
+            dataset_manifest_prefix=request.dataset_manifest_sha256[:12],
+            objects_checked=result['objects_checked'],
+        )
+        return {
+            'contract_version': R2_PREFLIGHT_CONTRACT_VERSION,
+            'status': 'r2_private_preflight_completed',
+            'request_id': request.request_id,
+            'actor_profile_id': request.actor_profile_id,
+            'training_run_id': request.training_run_id,
+            'dataset_manifest_prefix': request.dataset_manifest_sha256[:12],
+            'storage': result,
+            'runpod_sdk_version': RUNPOD_SDK_VERSION,
+            'worker_pid': os.getpid(),
+            'timestamp_ms': int(time.time() * 1000),
+            'safety': {
+                'training_started': False,
+                'preview_started': False,
+                'model_loaded': False,
+                'r2_metadata_read_executed': True,
+                'r2_object_download_executed': False,
+                'r2_write_executed': False,
+                'r2_delete_executed': False,
+                'r2_list_executed': False,
+                'automatic_retry_created': False,
+            },
+        }
+    except WorkerError as error:
+        log_event(
+            'identity_r2_private_preflight_failed',
+            request_id=getattr(request, 'request_id', None),
+            error_code=error.code,
+            retryable=error.retryable,
+        )
+        raise RuntimeError(f'{error.code}: {error}') from error
+
+
 def _handle_transport_smoke(event):
     payload = _input_payload(event)
     if not TRANSPORT_SMOKE_ENABLED:
@@ -306,6 +374,8 @@ def handler(event):
     )
     if contract_version == TRANSPORT_SMOKE_CONTRACT_VERSION:
         return _handle_transport_smoke(event)
+    if contract_version == R2_PREFLIGHT_CONTRACT_VERSION:
+        return _handle_r2_preflight(event)
     if contract_version == PREVIEW_CONTRACT_VERSION:
         return _handle_preview(event)
     return _handle_training(event)
@@ -316,5 +386,6 @@ log_event(
     runpod_sdk_version=RUNPOD_SDK_VERSION,
     handler_name='handler',
     transport_contract_version=TRANSPORT_SMOKE_CONTRACT_VERSION,
+    r2_preflight_contract_version=R2_PREFLIGHT_CONTRACT_VERSION,
 )
 runpod.serverless.start({'handler': handler})

@@ -9,6 +9,7 @@ UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{
 SHA_RE = re.compile(r'^[0-9a-f]{64}$')
 CONTRACT_VERSION = 'privacy-identity-lora-training-v2'
 PREVIEW_CONTRACT_VERSION = 'privacy-identity-lora-review-kit-v2'
+R2_PREFLIGHT_CONTRACT_VERSION = 'privacy-identity-lora-r2-preflight-v1'
 PREVIEW_VIDEO_KEY = 'video_walk_turn_smile'
 PREVIEW_IMAGE_KEYS = ('image_crying', 'image_sensual', 'image_lollipop')
 DIT_TRAINING_PROFILE = 'wan_dit_identity_video_v1'
@@ -130,6 +131,122 @@ def parse_training_request(event: dict[str, Any]) -> TrainingRequest:
     if expected_scope not in f"/{_text(output.get('prefix')).strip('/')}":
         raise WorkerError('OUTPUT_SCOPE_MISMATCH', 'Destino do adapter não está isolado pelo ator e pelo run.')
     return TrainingRequest(payload, _text(payload.get('request_id')), actor_id, run_id, _text(output.get('bucket')), _text(output.get('prefix')), expiry.isoformat())
+
+
+@dataclass(frozen=True)
+class R2PreflightObject:
+    sample_id: str
+    role: str
+    bucket: str
+    key: str
+    expected_sha256: str
+
+
+@dataclass(frozen=True)
+class R2PreflightRequest:
+    payload: dict[str, Any]
+    request_id: str
+    actor_profile_id: str
+    training_run_id: str
+    dataset_manifest_sha256: str
+    bucket: str
+    objects: tuple[R2PreflightObject, ...]
+    smoke_expires_at: str
+
+
+def parse_r2_preflight_request(event: dict[str, Any]) -> R2PreflightRequest:
+    payload = event.get('input') if isinstance(event.get('input'), dict) else event
+    if not isinstance(payload, dict) or payload.get('contract_version') != R2_PREFLIGHT_CONTRACT_VERSION:
+        raise WorkerError('UNSUPPORTED_R2_PREFLIGHT_CONTRACT', 'Contrato do preflight privado do R2 incompatível.')
+    if payload.get('execution_mode') != 'private_r2_metadata_preflight':
+        raise WorkerError('INVALID_R2_PREFLIGHT_MODE', 'Modo do preflight privado do R2 inválido.')
+
+    request_id = _text(payload.get('request_id'))
+    actor_id = _text(payload.get('actor_profile_id'))
+    run_id = _text(payload.get('training_run_id'))
+    manifest_sha256 = _text(payload.get('dataset_manifest_sha256')).lower()
+    bucket = _text(payload.get('bucket'))
+
+    if not request_id or len(request_id) > 128:
+        raise WorkerError('R2_PREFLIGHT_REQUEST_ID_INVALID', 'Identificador do preflight ausente ou inválido.')
+    if not UUID_RE.match(actor_id) or not UUID_RE.match(run_id):
+        raise WorkerError('R2_PREFLIGHT_SCOPE_INVALID', 'Ator ou run do preflight inválido.')
+    if not SHA_RE.match(manifest_sha256):
+        raise WorkerError('R2_PREFLIGHT_MANIFEST_INVALID', 'Assinatura do dataset inválida para o preflight.')
+    if not bucket or bucket.startswith(('http://', 'https://')):
+        raise WorkerError('R2_PREFLIGHT_BUCKET_INVALID', 'Bucket privado inválido para o preflight.')
+
+    raw_objects = payload.get('objects') or []
+    if not isinstance(raw_objects, list) or not (2 <= len(raw_objects) <= 64):
+        raise WorkerError('R2_PREFLIGHT_OBJECT_SET_INVALID', 'O preflight exige entre 2 e 64 referências privadas.')
+
+    allowed_roles = {'video_source', 'reference_image_source'}
+    objects: list[R2PreflightObject] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in raw_objects:
+        if not isinstance(raw, dict):
+            raise WorkerError('R2_PREFLIGHT_OBJECT_INVALID', 'Referência privada inválida no preflight.')
+        sample_id = _text(raw.get('sample_id'))
+        role = _text(raw.get('role'))
+        source = raw.get('source') or {}
+        expected_sha256 = _text(raw.get('expected_sha256')).lower()
+        if not sample_id or len(sample_id) > 128 or role not in allowed_roles:
+            raise WorkerError('R2_PREFLIGHT_OBJECT_SCOPE_INVALID', 'Amostra ou papel inválido no preflight.')
+        if not isinstance(source, dict) or not _private_ref(source):
+            raise WorkerError('R2_PREFLIGHT_PUBLIC_REFERENCE_FORBIDDEN', 'O preflight aceita somente bucket/key privados.')
+        source_bucket = _text(source.get('bucket'))
+        key = _text(source.get('key'))
+        if source_bucket != bucket:
+            raise WorkerError('R2_PREFLIGHT_BUCKET_SCOPE_MISMATCH', 'Referência fora do bucket privado autorizado.')
+        if actor_id not in key:
+            raise WorkerError('R2_PREFLIGHT_ACTOR_KEY_SCOPE_MISMATCH', 'Referência privada fora do escopo do ator.')
+        if not SHA_RE.match(expected_sha256):
+            raise WorkerError('R2_PREFLIGHT_CHECKSUM_INVALID', 'Checksum esperado inválido no preflight.')
+        identity = (source_bucket, key)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        objects.append(R2PreflightObject(sample_id, role, source_bucket, key, expected_sha256))
+
+    if len(objects) < 2:
+        raise WorkerError('R2_PREFLIGHT_UNIQUE_OBJECTS_INSUFFICIENT', 'O preflight exige ao menos duas referências privadas distintas.')
+
+    safety = payload.get('safety') or {}
+    required_safety = {
+        'actor_scoped': True,
+        'run_scoped': True,
+        'private_storage_only': True,
+        'metadata_only': True,
+        'download_allowed': False,
+        'write_allowed': False,
+        'delete_allowed': False,
+        'training_allowed': False,
+        'model_load_allowed': False,
+        'automatic_retry_allowed': False,
+        'one_shot_smoke': True,
+    }
+    if any(safety.get(key) is not expected for key, expected in required_safety.items()):
+        raise WorkerError('INVALID_R2_PREFLIGHT_SAFETY', 'Contrato de segurança do preflight privado está incompleto.')
+
+    smoke = payload.get('smoke') or {}
+    expiry = _parse_expiry(smoke.get('expires_at'))
+    if smoke.get('enabled') is not True or smoke.get('one_shot') is not True or int(smoke.get('max_jobs') or 0) != 1:
+        raise WorkerError('INVALID_R2_PREFLIGHT_SMOKE', 'O preflight privado precisa ser one-shot.')
+    if _text(smoke.get('actor_profile_id')) != actor_id or _text(smoke.get('training_run_id')) != run_id:
+        raise WorkerError('R2_PREFLIGHT_SMOKE_SCOPE_MISMATCH', 'O escopo do preflight não corresponde ao ator e run.')
+    if not expiry or expiry <= datetime.now(timezone.utc):
+        raise WorkerError('R2_PREFLIGHT_WINDOW_EXPIRED', 'A janela controlada do preflight do R2 expirou.')
+
+    return R2PreflightRequest(
+        payload=payload,
+        request_id=request_id,
+        actor_profile_id=actor_id,
+        training_run_id=run_id,
+        dataset_manifest_sha256=manifest_sha256,
+        bucket=bucket,
+        objects=tuple(objects),
+        smoke_expires_at=expiry.isoformat(),
+    )
 
 
 @dataclass(frozen=True)
