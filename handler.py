@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import os
+import platform
 import tempfile
+import time
 import uuid
+from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 
 import runpod
@@ -26,6 +30,33 @@ from identity_worker.adapter_scope import collect_and_audit_checkpoints
 from identity_worker.trainer import build_command, run_training
 
 settings = Settings()
+
+
+TRANSPORT_SMOKE_CONTRACT_VERSION = 'privacy-identity-lora-transport-smoke-v1'
+
+
+def _package_version(name: str) -> str:
+    try:
+        return package_version(name)
+    except PackageNotFoundError:
+        return 'unknown'
+
+
+RUNPOD_SDK_VERSION = _package_version('runpod')
+TRANSPORT_SMOKE_ENABLED = os.getenv('PRIVACY_LORA_TRANSPORT_SMOKE_ENABLED', 'false').strip().lower() == 'true'
+
+
+log_event(
+    'runpod_worker_boot',
+    runpod_sdk_version=RUNPOD_SDK_VERSION,
+    python_version=platform.python_version(),
+    transport_smoke_enabled=TRANSPORT_SMOKE_ENABLED,
+    training_enabled=settings.allow_training,
+    training_dry_run_only=settings.dry_run_only,
+    training_smoke_mode=settings.smoke_mode,
+    preview_enabled=settings.allow_preview,
+    preview_mode=settings.preview_mode,
+)
 
 
 def _input_payload(event):
@@ -219,12 +250,71 @@ def _handle_preview(event):
         log_event('identity_qa_kit_failed', request_id=getattr(request, 'request_id', None), error_code=type(error).__name__, retryable=False, one_shot_reserved=lock_path is not None)
         raise
 
+def _handle_transport_smoke(event):
+    payload = _input_payload(event)
+    if not TRANSPORT_SMOKE_ENABLED:
+        raise RuntimeError('TRANSPORT_SMOKE_DISABLED: o diagnóstico de transporte permanece fechado.')
+    if settings.allow_training or not settings.dry_run_only or settings.smoke_mode:
+        raise RuntimeError('TRANSPORT_SMOKE_REQUIRES_TRAINING_CLOSED: feche treinamento, dry-run e smoke antes do diagnóstico.')
+    if settings.allow_preview or settings.preview_mode:
+        raise RuntimeError('TRANSPORT_SMOKE_REQUIRES_PREVIEW_CLOSED: feche a prévia antes do diagnóstico.')
+    if not isinstance(payload, dict):
+        raise RuntimeError('TRANSPORT_SMOKE_PAYLOAD_INVALID: input deve ser um objeto.')
+
+    execution_mode = str(payload.get('execution_mode') or '').strip()
+    request_id = str(payload.get('request_id') or '').strip()
+    nonce = str(payload.get('nonce') or '').strip()
+    if execution_mode != 'queue_transport_only':
+        raise RuntimeError('TRANSPORT_SMOKE_MODE_INVALID: use queue_transport_only.')
+    if not request_id or len(request_id) > 128:
+        raise RuntimeError('TRANSPORT_SMOKE_REQUEST_ID_INVALID')
+    if len(nonce) < 16 or len(nonce) > 128:
+        raise RuntimeError('TRANSPORT_SMOKE_NONCE_INVALID')
+
+    log_event(
+        'runpod_transport_smoke_received',
+        request_id=request_id,
+        provider_job_id=str(event.get('id') or '') if isinstance(event, dict) else '',
+        runpod_sdk_version=RUNPOD_SDK_VERSION,
+    )
+    return {
+        'contract_version': TRANSPORT_SMOKE_CONTRACT_VERSION,
+        'status': 'transport_smoke_completed',
+        'request_id': request_id,
+        'nonce': nonce,
+        'runpod_sdk_version': RUNPOD_SDK_VERSION,
+        'worker_pid': os.getpid(),
+        'timestamp_ms': int(time.time() * 1000),
+        'safety': {
+            'training_started': False,
+            'preview_started': False,
+            'r2_read_executed': False,
+            'r2_write_executed': False,
+            'model_loaded': False,
+            'automatic_retry_created': False,
+        },
+    }
+
+
 def handler(event):
     payload = _input_payload(event)
     contract_version = payload.get('contract_version') if isinstance(payload, dict) else None
+    log_event(
+        'runpod_job_received',
+        provider_job_id=str(event.get('id') or '') if isinstance(event, dict) else '',
+        contract_version=str(contract_version or ''),
+    )
+    if contract_version == TRANSPORT_SMOKE_CONTRACT_VERSION:
+        return _handle_transport_smoke(event)
     if contract_version == PREVIEW_CONTRACT_VERSION:
         return _handle_preview(event)
     return _handle_training(event)
 
 
+log_event(
+    'runpod_serverless_start_enter',
+    runpod_sdk_version=RUNPOD_SDK_VERSION,
+    handler_name='handler',
+    transport_contract_version=TRANSPORT_SMOKE_CONTRACT_VERSION,
+)
 runpod.serverless.start({'handler': handler})

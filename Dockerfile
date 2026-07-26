@@ -29,6 +29,8 @@ COPY requirements.txt /app/requirements.txt
 RUN python -m pip install --upgrade --upgrade-strategy only-if-needed -r /app/requirements.txt \
     && python -m pip check
 
+RUN python -c "from importlib.metadata import version; actual=version('runpod'); expected='1.11.0'; assert actual == expected, f'runpod sdk mismatch: expected {expected}, got {actual}'; print(f'RUNPOD_SDK_BUILD_OK={actual}')"
+
 COPY handler.py /app/handler.py
 COPY identity_worker /app/identity_worker
 
