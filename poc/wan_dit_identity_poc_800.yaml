@@ -41,7 +41,7 @@ training:
     - 400
     - 600
     - 800
-  save_steps_internal: 200
+  save_steps_internal: 400
   final_checkpoint: 800
   automatic_retry: false
 output:

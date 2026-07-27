@@ -86,3 +86,16 @@ treinamento, não escreve e não apaga dados. O retorno mascara bucket e chaves,
 expondo somente fingerprints, tamanhos e estado opcional do checksum armazenado em
 metadados. Use `scripts/poc/TEST_RUNPOD_R2_PREFLIGHT.ps1` e desarme o gate após a
 execução.
+
+## D3.6H13HF1 — Checkpoints persistentes e fail-closed
+
+- Dataset temporário é materializado no disco local efêmero e pré-carregado uma única vez na RAM.
+- Checkpoints são gravados fora do `TemporaryDirectory`, sob
+  `/runpod-volume/privacy-identity-lora/training-runs/<actor>/<run>/output`.
+- O worker comprova pelo `/proc/self/mountinfo` que `/runpod-volume` é uma montagem real
+  antes de reservar o lock one-shot.
+- Diretório de output não vazio bloqueia sobrescrita ou mistura de runs.
+- O comando real usa BF16 e `--save_steps 400`; o patch de passos exatos preserva
+  os checkpoints governados 400, 600 e 800.
+- Em falha intermediária, checkpoints já concluídos permanecem no Network Volume
+  para auditoria manual; não há retry automático.

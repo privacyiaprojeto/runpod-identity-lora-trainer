@@ -24,6 +24,7 @@ from identity_worker.errors import WorkerError
 from identity_worker.model_lock import materialize_model
 from identity_worker.model_preflight import assert_model_binding_compatible
 from identity_worker.one_shot import reserve_one_shot, reserve_preview_one_shot, update_one_shot
+from identity_worker.run_paths import assert_persistent_runtime_root, prepare_training_output_dir
 from identity_worker.preview import materialize_preview_inputs, run_qa_kit
 from identity_worker.runtime_preflight import assert_runtime_compatible
 from identity_worker.r2_preflight import probe_private_r2_metadata
@@ -119,16 +120,33 @@ def _handle_training(event):
         model_probe = assert_model_binding_compatible(model_binding)
         log_event('identity_training_model_binding_ready', request_id=request.request_id, model_name=model_probe['modelName'], model_hash=model_probe['modelHash'], diffusion_shard_count=model_probe['diffusionShardCount'])
 
+        persistent_runtime = assert_persistent_runtime_root(settings.runtime_root)
+        log_event(
+            'identity_training_persistent_runtime_ready',
+            request_id=request.request_id,
+            runtime_root=persistent_runtime['runtime_root'],
+            mount_point=persistent_runtime['mount_point'],
+        )
         lock_path = reserve_one_shot(settings.smoke_lock_root, request.actor_profile_id, request.training_run_id, request.request_id)
         log_event('identity_training_smoke_reserved', request_id=request.request_id, actor_profile_id=request.actor_profile_id, training_run_id=request.training_run_id)
 
-        with tempfile.TemporaryDirectory(dir=str(settings.runtime_root), prefix=f'identity_{request.training_run_id}_') as temp:
+        with tempfile.TemporaryDirectory(prefix=f'identity_{request.training_run_id}_') as temp:
             work = Path(temp)
             s3 = r2_client(settings)
             update_one_shot(lock_path, 'materializing_dataset')
             dataset_root, metadata_path = materialize_dataset(request, settings, work, s3)
-            output_dir = work / 'output'
-            update_one_shot(lock_path, 'training')
+            output_dir = prepare_training_output_dir(
+                settings.runtime_root,
+                request.actor_profile_id,
+                request.training_run_id,
+            )
+            output_relative = output_dir.relative_to(settings.runtime_root.resolve()).as_posix()
+            update_one_shot(
+                lock_path,
+                'training',
+                persistentOutput=True,
+                checkpointRoot=output_relative,
+            )
             adapter = run_training(build_command(request, settings, dataset_root, metadata_path, model_binding, output_dir), output_dir)
             checkpoints = collect_and_audit_checkpoints(output_dir)
             batch_id = uuid.uuid4().hex

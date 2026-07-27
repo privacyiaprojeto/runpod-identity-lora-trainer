@@ -18,7 +18,7 @@ def test_wan_dit_training_command_targets_generator_not_vace(tmp_path):
     assert "--lora_base_model dit" in joined
     assert "--remove_prefix_in_ckpt pipe.dit." in joined
     assert "cross_attn.q,cross_attn.k,cross_attn.v,cross_attn.o,ffn.0,ffn.2" in joined
-    assert "--save_steps 200" in joined
+    assert "--save_steps 400" in joined
     assert "--lora_base_model vace" not in joined
     assert "pipe.vace." not in joined
     assert DIT_TRAINING_PROFILE == "wan_dit_identity_video_v1"

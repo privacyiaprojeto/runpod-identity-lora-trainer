@@ -26,12 +26,12 @@ def build_command(request, settings, dataset_root: Path, metadata_path: Path, mo
     t = request.payload["training"]
     grouped_model_paths = model_binding.diffsynth_model_paths()
     return [
-        "accelerate", "launch", str(settings.diffsynth_root / "examples/wanvideo/model_training/train.py"),
+        "accelerate", "launch", '--mixed_precision', 'bf16', str(settings.diffsynth_root / "examples/wanvideo/model_training/train.py"),
         "--dataset_base_path", str(dataset_root), "--dataset_metadata_path", str(metadata_path),
         "--data_file_keys", "video,vace_video,vace_reference_image", "--height", str(t["height"]), "--width", str(t["width"]),
         "--num_frames", str(t["num_frames"]), "--dataset_repeat", str(t["dataset_repeat"]),
         "--model_paths", json.dumps(grouped_model_paths), "--learning_rate", str(t["learning_rate"]),
-        "--num_epochs", str(t["num_epochs"]), "--save_steps", "200",
+        "--num_epochs", str(t["num_epochs"]), "--save_steps", "400",
         "--remove_prefix_in_ckpt", "pipe.dit.", "--output_path", str(output_dir),
         "--lora_base_model", "dit", "--lora_target_modules", ",".join(t["target_modules"]),
         "--lora_rank", str(t["lora_rank"]), "--extra_inputs", "vace_video,vace_reference_image",

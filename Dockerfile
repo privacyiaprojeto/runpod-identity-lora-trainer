@@ -39,3 +39,14 @@ RUN mkdir -p /runpod-volume/privacy-identity-lora /runpod-volume/models/identity
     && python -m identity_worker.runtime_preflight --diffsynth-root /opt/DiffSynth-Studio
 
 CMD ["python", "-u", "/app/handler.py"]
+
+# BEGIN D3_6H13_RAM_CACHE_CHECKPOINT_RESCUE_V1
+# Preserve upstream Wan entrypoint and replace it with the Privacy IA RAM-cache overlay.
+COPY privacy_patches/diffsynth_ram_cache_entrypoint.py /opt/DiffSynth-Studio/examples/wanvideo/model_training/train.privacy_ram_cache.py
+RUN set -eux; \
+    original=/opt/DiffSynth-Studio/examples/wanvideo/model_training/train.py; \
+    backup=/opt/DiffSynth-Studio/examples/wanvideo/model_training/train.privacy_original.py; \
+    test -f "$original"; \
+    if [ ! -f "$backup" ]; then cp "$original" "$backup"; fi; \
+    cp /opt/DiffSynth-Studio/examples/wanvideo/model_training/train.privacy_ram_cache.py "$original"
+# END D3_6H13_RAM_CACHE_CHECKPOINT_RESCUE_V1
