@@ -32,15 +32,22 @@ def test_nonempty_training_output_is_fail_closed(tmp_path):
     assert error.value.code == "TRAINING_OUTPUT_ALREADY_EXISTS"
 
 
-def test_mount_proof_accepts_runpod_volume(tmp_path):
+def test_mount_proof_accepts_runpod_volume_without_mutating_ci_host(tmp_path):
     runtime_root = Path("/runpod-volume/privacy-identity-lora")
     mountinfo = tmp_path / "mountinfo"
     mountinfo.write_text(
         "36 25 0:44 / /runpod-volume rw,relatime - nfs server:/volume rw\n",
         encoding="utf-8",
     )
-    result = assert_persistent_runtime_root(runtime_root, mountinfo_path=mountinfo)
-    assert result["mount_point"] == "/runpod-volume"
+    result = assert_persistent_runtime_root(
+        runtime_root,
+        mountinfo_path=mountinfo,
+        ensure_exists=False,
+    )
+    assert result == {
+        "runtime_root": "/runpod-volume/privacy-identity-lora",
+        "mount_point": "/runpod-volume",
+    }
 
 
 def test_mount_proof_rejects_plain_root_filesystem(tmp_path):
@@ -51,7 +58,11 @@ def test_mount_proof_rejects_plain_root_filesystem(tmp_path):
         encoding="utf-8",
     )
     with pytest.raises(WorkerError) as error:
-        assert_persistent_runtime_root(runtime_root, mountinfo_path=mountinfo)
+        assert_persistent_runtime_root(
+            runtime_root,
+            mountinfo_path=mountinfo,
+            ensure_exists=False,
+        )
     assert error.value.code == "TRAINING_NETWORK_VOLUME_NOT_MOUNTED"
 
 
@@ -63,8 +74,29 @@ def test_mount_proof_rejects_runtime_outside_runpod_volume(tmp_path):
         encoding="utf-8",
     )
     with pytest.raises(WorkerError) as error:
-        assert_persistent_runtime_root(runtime_root, mountinfo_path=mountinfo)
+        assert_persistent_runtime_root(
+            runtime_root,
+            mountinfo_path=mountinfo,
+            ensure_exists=False,
+        )
     assert error.value.code == "TRAINING_RUNTIME_ROOT_NOT_PERSISTENT"
+
+
+def test_production_default_still_requires_filesystem_preparation(monkeypatch, tmp_path):
+    runtime_root = Path("/runpod-volume/privacy-identity-lora")
+    mountinfo = tmp_path / "mountinfo"
+    mountinfo.write_text(
+        "36 25 0:44 / /runpod-volume rw,relatime - nfs server:/volume rw\n",
+        encoding="utf-8",
+    )
+
+    def blocked_mkdir(self, *args, **kwargs):
+        raise PermissionError("simulated")
+
+    monkeypatch.setattr(Path, "mkdir", blocked_mkdir)
+    with pytest.raises(WorkerError) as error:
+        assert_persistent_runtime_root(runtime_root, mountinfo_path=mountinfo)
+    assert error.value.code == "TRAINING_PERSISTENT_RUNTIME_CREATE_FAILED"
 
 
 def test_training_command_uses_bf16_and_400(tmp_path):

@@ -56,7 +56,18 @@ def assert_persistent_runtime_root(
     runtime_root: Path,
     *,
     mountinfo_path: Path = Path("/proc/self/mountinfo"),
+    ensure_exists: bool = True,
 ) -> dict[str, str]:
+    """
+    Prove that runtime_root is scoped under a real /runpod-volume mount.
+
+    `ensure_exists=True` is the production behavior and creates the scoped
+    runtime directory only after mount proof succeeds.
+
+    Synthetic contract tests pass `ensure_exists=False` so they validate a
+    supplied mountinfo fixture without attempting to mutate the CI host root
+    filesystem.
+    """
     root_contract = _as_posix_contract_path(runtime_root)
     try:
         root_contract.relative_to(_REQUIRED_RUNTIME_PREFIX)
@@ -100,13 +111,22 @@ def assert_persistent_runtime_root(
             retryable=True,
         ) from exc
 
-    # Filesystem operations intentionally use the native Path only after the
-    # Linux mount contract has been proven from /proc/self/mountinfo.
-    filesystem_root = runtime_root.resolve()
-    filesystem_root.mkdir(parents=True, exist_ok=True)
+    if ensure_exists:
+        filesystem_root = runtime_root.resolve()
+        try:
+            filesystem_root.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            raise WorkerError(
+                "TRAINING_PERSISTENT_RUNTIME_CREATE_FAILED",
+                "A montagem foi comprovada, mas o diretório persistente do treinamento não pôde ser preparado.",
+                retryable=True,
+            ) from exc
+        runtime_value = str(filesystem_root)
+    else:
+        runtime_value = root_contract.as_posix()
 
     return {
-        "runtime_root": str(filesystem_root),
+        "runtime_root": runtime_value,
         "mount_point": mount_point.as_posix(),
     }
 
