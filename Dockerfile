@@ -50,3 +50,12 @@ RUN set -eux; \
     if [ ! -f "$backup" ]; then cp "$original" "$backup"; fi; \
     cp /opt/DiffSynth-Studio/examples/wanvideo/model_training/train.privacy_ram_cache.py "$original"
 # END D3_6H13_RAM_CACHE_CHECKPOINT_RESCUE_V1
+
+# BEGIN D3_6H14_1_IMPORT_SAFE_RUNTIME_PREFLIGHT_V1
+# Validate the exact overlay installed in the final image, not only upstream train.py.
+RUN python -m compileall -q /app \
+    && python -m py_compile \
+        /opt/DiffSynth-Studio/examples/wanvideo/model_training/train.py \
+        /opt/DiffSynth-Studio/examples/wanvideo/model_training/train.privacy_original.py \
+    && python -m identity_worker.runtime_preflight --diffsynth-root /opt/DiffSynth-Studio
+# END D3_6H14_1_IMPORT_SAFE_RUNTIME_PREFLIGHT_V1

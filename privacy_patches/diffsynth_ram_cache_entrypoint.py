@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 """Privacy IA DiffSynth Wan entrypoint overlay.
 
-Executed in place of DiffSynth-Studio's Wan train.py. It patches the imported
-UnifiedDataset so each unique sample is decoded exactly once, materialized in
-system RAM, and reused for all logical repeats. It then executes the preserved
-upstream entrypoint.
+Executed in place of DiffSynth-Studio's Wan train.py. During normal CLI
+execution it installs the governed RAM-cache/BF16 patches and then delegates to
+the preserved upstream entrypoint. During import-based runtime preflight it
+loads only the upstream contract and never executes argparse or training.
 """
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
 import os
 from pathlib import Path
 import runpy
 import sys
 import time
+from types import ModuleType
 from typing import Any
+
+
+IMPORT_SAFE_PATCH_ID = "D3_6H14_1_IMPORT_SAFE_RUNTIME_PREFLIGHT_V1"
 
 
 def _set_cli_value(flag: str, value: str, *, append_if_missing: bool = True) -> None:
@@ -183,18 +188,55 @@ def _install_runtime_patches() -> None:
     accelerate.Accelerator = bf16_accelerator
 
 
-# The upstream parser supports save_steps. Force the governed checkpoint cadence.
-_set_cli_value("--save_steps", "400")
-# If the command already exposes worker count, force a single-process in-memory cache.
-_set_cli_value("--dataset_num_workers", "0", append_if_missing=False)
-os.environ.setdefault("ACCELERATE_MIXED_PRECISION", "bf16")
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+def _original_entrypoint_path() -> Path:
+    path = Path(__file__).with_name("train.privacy_original.py")
+    if not path.is_file():
+        raise RuntimeError(f"RAM_CACHE_ORIGINAL_ENTRYPOINT_MISSING: {path}")
+    return path
 
-_install_runtime_patches()
 
-original_entrypoint = Path(__file__).with_name("train.privacy_original.py")
-if not original_entrypoint.is_file():
-    raise RuntimeError(f"RAM_CACHE_ORIGINAL_ENTRYPOINT_MISSING: {original_entrypoint}")
+def _load_original_contract() -> ModuleType:
+    """Import the preserved upstream module without entering its CLI block."""
+    original_entrypoint = _original_entrypoint_path()
+    module_name = "privacy_identity_lora_wan_original_contract"
+    spec = importlib.util.spec_from_file_location(module_name, original_entrypoint)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"RAM_CACHE_ORIGINAL_ENTRYPOINT_LOADER_FAILED: {original_entrypoint}")
+    module = importlib.util.module_from_spec(spec)
+    previous = sys.modules.get(module_name)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if previous is None:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = previous
+    return module
 
-sys.argv[0] = str(original_entrypoint)
-runpy.run_path(str(original_entrypoint), run_name="__main__")
+
+def _run_cli() -> None:
+    """Install runtime patches and delegate to the preserved upstream CLI."""
+    # The upstream parser supports save_steps. Force the governed checkpoint cadence.
+    _set_cli_value("--save_steps", "400")
+    # If the command already exposes worker count, force a single-process in-memory cache.
+    _set_cli_value("--dataset_num_workers", "0", append_if_missing=False)
+    os.environ.setdefault("ACCELERATE_MIXED_PRECISION", "bf16")
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+    _install_runtime_patches()
+
+    original_entrypoint = _original_entrypoint_path()
+    sys.argv[0] = str(original_entrypoint)
+    runpy.run_path(str(original_entrypoint), run_name="__main__")
+
+
+if __name__ == "__main__":
+    _run_cli()
+else:
+    # Runtime preflight imports this overlay. Export the same governed contract
+    # as upstream while keeping argparse and training completely inactive.
+    _upstream_contract = _load_original_contract()
+    wan_parser = _upstream_contract.wan_parser
+    WanTrainingModule = _upstream_contract.WanTrainingModule
+    __all__ = ["wan_parser", "WanTrainingModule"]

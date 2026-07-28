@@ -70,6 +70,12 @@ def _load_training_entrypoint(training_script: Path) -> ModuleType:
             raise ImportError("Não foi possível criar o loader do entrypoint oficial.")
         module = util.module_from_spec(spec)
         spec.loader.exec_module(module)
+    except SystemExit as exc:
+        raise WorkerError(
+            "TRAINING_RUNTIME_ENTRYPOINT_SYSTEM_EXIT",
+            f"O entrypoint oficial tentou encerrar o processo durante o preflight (código {exc.code!r}).",
+            retryable=True,
+        ) from exc
     except (ImportError, ModuleNotFoundError) as exc:
         missing = str(getattr(exc, "name", "") or "").split(".", 1)[0]
         code = "TRAINING_RUNTIME_AUDIO_DEPENDENCY_MISSING" if missing in AUDIO_IMPORTS else "TRAINING_RUNTIME_ENTRYPOINT_IMPORT_FAILED"

@@ -5,11 +5,14 @@ import argparse
 import json
 from pathlib import Path
 import re
-import sys
 
 PATCH_ID = "D3_6H13_RAM_CACHE_CHECKPOINT_RESCUE_V1"
 BEGIN = f"# BEGIN {PATCH_ID}"
 END = f"# END {PATCH_ID}"
+
+IMPORT_SAFE_PATCH_ID = "D3_6H14_1_IMPORT_SAFE_RUNTIME_PREFLIGHT_V1"
+IMPORT_SAFE_BEGIN = f"# BEGIN {IMPORT_SAFE_PATCH_ID}"
+IMPORT_SAFE_END = f"# END {IMPORT_SAFE_PATCH_ID}"
 
 DOCKER_BLOCK = r"""
 # BEGIN D3_6H13_RAM_CACHE_CHECKPOINT_RESCUE_V1
@@ -24,13 +27,36 @@ RUN set -eux; \
 # END D3_6H13_RAM_CACHE_CHECKPOINT_RESCUE_V1
 """.strip()
 
+POST_OVERLAY_PREFLIGHT_BLOCK = r"""
+# BEGIN D3_6H14_1_IMPORT_SAFE_RUNTIME_PREFLIGHT_V1
+# Validate the exact overlay installed in the final image, not only upstream train.py.
+RUN python -m compileall -q /app \
+    && python -m py_compile \
+        /opt/DiffSynth-Studio/examples/wanvideo/model_training/train.py \
+        /opt/DiffSynth-Studio/examples/wanvideo/model_training/train.privacy_original.py \
+    && python -m identity_worker.runtime_preflight --diffsynth-root /opt/DiffSynth-Studio
+# END D3_6H14_1_IMPORT_SAFE_RUNTIME_PREFLIGHT_V1
+""".strip()
+
+
+def append_block_if_missing(path: Path, marker: str, block: str) -> bool:
+    text = path.read_text(encoding="utf-8")
+    if marker in text:
+        return False
+    path.write_text(text.rstrip() + "\n\n" + block + "\n", encoding="utf-8", newline="\n")
+    return True
+
 
 def insert_docker_block(path: Path) -> bool:
+    return append_block_if_missing(path, BEGIN, DOCKER_BLOCK)
+
+
+def insert_post_overlay_preflight(path: Path) -> bool:
+    changed = append_block_if_missing(path, IMPORT_SAFE_BEGIN, POST_OVERLAY_PREFLIGHT_BLOCK)
     text = path.read_text(encoding="utf-8")
-    if BEGIN in text:
-        return False
-    path.write_text(text.rstrip() + "\n\n" + DOCKER_BLOCK + "\n", encoding="utf-8", newline="\n")
-    return True
+    if text.index(IMPORT_SAFE_BEGIN) < text.index(BEGIN):
+        raise SystemExit("Post-overlay preflight must appear after the RAM-cache overlay block")
+    return changed
 
 
 def patch_accelerate_source(path: Path) -> tuple[bool, str]:
@@ -66,6 +92,7 @@ def main() -> int:
         raise SystemExit(f"Dockerfile not found: {dockerfile}")
 
     docker_changed = insert_docker_block(dockerfile)
+    post_overlay_preflight_changed = insert_post_overlay_preflight(dockerfile)
 
     candidates = [repo / "identity_worker" / "trainer.py"]
     candidates.extend(sorted((repo / "identity_worker").glob("*.py")))
@@ -89,12 +116,14 @@ def main() -> int:
         raise SystemExit("Could not locate the accelerate launch command; patch aborted fail-closed")
 
     report = {
-        "status": "D3_6H13_TRAINER_REPO_PATCHED",
+        "status": "D3_6H14_1_TRAINER_REPO_PATCHED",
         "dockerfile_changed": docker_changed,
+        "post_overlay_preflight_changed": post_overlay_preflight_changed,
         "bf16_launch": bf16_result,
         "bf16_file": str(bf16_path.relative_to(repo)),
         "save_steps": 400,
         "ram_cache_overlay": True,
+        "import_safe_runtime_preflight": True,
     }
     print(json.dumps(report, indent=2))
     return 0
