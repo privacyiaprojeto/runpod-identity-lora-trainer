@@ -236,11 +236,7 @@ def _handle_training(event):
                 request.training_run_id,
         )
 
-        with tempfile.TemporaryDirectory(
-            prefix=
-                f'identity_'
-                f'{request.training_run_id}_'
-        ) as temp:
+        with tempfile.TemporaryDirectory(prefix=f'identity_{request.training_run_id}_') as temp:
 
             work = Path(
                 temp
