@@ -7,19 +7,46 @@ import subprocess
 from pathlib import Path
 
 DOCKER_MARKER = "PRIVACY_WAN_DIT_EXACT_STEP_PATCH_V1"
-MARKER = "PRIVACY_WAN_DIT_STRUCTURAL_PATCHER_V2"
+LEGACY_MARKER = "PRIVACY_WAN_DIT_STRUCTURAL_PATCHER_V2"
+MARKER = "PRIVACY_WAN_DIT_STRUCTURAL_PATCHER_V3_TELEMETRY"
 
 PATCHED_TAIL = '''    # PRIVACY_WAN_DIT_EXACT_STEP_PATCH_V1
-    # PRIVACY_WAN_DIT_STRUCTURAL_PATCHER_V2
+    # PRIVACY_WAN_DIT_STRUCTURAL_PATCHER_V3_TELEMETRY
+    # PRIVACY_H2_TRAINING_TELEMETRY_V1
     privacy_max_steps = int(os.environ.get("PRIVACY_MAX_OPTIMIZER_STEPS", "0") or 0)
     privacy_checkpoint_steps = {
         int(item) for item in os.environ.get("PRIVACY_CHECKPOINT_STEPS", "").split(",") if item.strip()
     }
+    privacy_telemetry_path = os.environ.get(
+        "PRIVACY_TRAINING_TELEMETRY_PATH", ""
+    ).strip()
+    privacy_telemetry_handle = None
+    privacy_started_at = None
     if privacy_max_steps:
         if privacy_checkpoint_steps != {400, 600, 800} or privacy_max_steps != 800:
             raise ValueError("Invalid Privacy IA exact-step checkpoint contract.")
         if int(getattr(accelerator, "gradient_accumulation_steps", 1)) != 1:
             raise ValueError("Privacy IA exact-step POC requires gradient_accumulation_steps=1.")
+        if not privacy_telemetry_path:
+            raise ValueError(
+                "PRIVACY_TRAINING_TELEMETRY_PATH is required."
+            )
+        privacy_telemetry_dir = os.path.dirname(
+            privacy_telemetry_path
+        )
+        if privacy_telemetry_dir:
+            os.makedirs(
+                privacy_telemetry_dir,
+                exist_ok=True,
+            )
+        import time as privacy_time
+        privacy_started_at = privacy_time.monotonic()
+        privacy_telemetry_handle = open(
+            privacy_telemetry_path,
+            "w",
+            encoding="utf-8",
+            newline="\\n",
+        )
         save_steps = None
     privacy_stop = False
     for epoch_id in range(num_epochs):
@@ -32,10 +59,51 @@ PATCHED_TAIL = '''    # PRIVACY_WAN_DIT_EXACT_STEP_PATCH_V1
                 accelerator.backward(loss)
                 if enable_model_cpu_offload:
                     offload_manager.after_backward()
+                privacy_learning_rate = None
+                if privacy_max_steps:
+                    privacy_param_groups = getattr(
+                        optimizer,
+                        "param_groups",
+                        None,
+                    )
+                    if not privacy_param_groups:
+                        raise RuntimeError(
+                            "Optimizer learning rate unavailable."
+                        )
+                    privacy_learning_rate = float(
+                        privacy_param_groups[0]["lr"]
+                    )
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
                 model_logger.on_step_end(accelerator, model, save_steps, loss=loss)
+                if privacy_max_steps:
+                    if privacy_telemetry_handle is None:
+                        raise RuntimeError(
+                            "Training telemetry handle unavailable."
+                        )
+                    privacy_loss_value = float(
+                        loss.detach().float().item()
+                    )
+                    privacy_step_record = {
+                        "event": "optimizer_step",
+                        "step": int(model_logger.num_steps),
+                        "loss": privacy_loss_value,
+                        "learning_rate": privacy_learning_rate,
+                        "checkpoint": (
+                            model_logger.num_steps
+                            in privacy_checkpoint_steps
+                        ),
+                    }
+                    privacy_telemetry_handle.write(
+                        json.dumps(
+                            privacy_step_record,
+                            sort_keys=True,
+                            allow_nan=False,
+                        )
+                        + "\\n"
+                    )
+                    privacy_telemetry_handle.flush()
                 if privacy_max_steps and model_logger.num_steps in privacy_checkpoint_steps:
                     model_logger.save_model(accelerator, model, f"step-{model_logger.num_steps}.safetensors")
                 if privacy_max_steps and model_logger.num_steps >= privacy_max_steps:
@@ -49,6 +117,34 @@ PATCHED_TAIL = '''    # PRIVACY_WAN_DIT_EXACT_STEP_PATCH_V1
     if privacy_max_steps and model_logger.num_steps != privacy_max_steps:
         raise RuntimeError(f"Exact optimizer step contract not reached: {model_logger.num_steps}/{privacy_max_steps}")
     model_logger.on_training_end(accelerator, model, save_steps)
+    if privacy_max_steps:
+        if privacy_telemetry_handle is None or privacy_started_at is None:
+            raise RuntimeError(
+                "Training telemetry terminal state unavailable."
+            )
+        privacy_end_record = {
+            "event": "training_end",
+            "step": int(model_logger.num_steps),
+            "elapsed_seconds": round(
+                privacy_time.monotonic()
+                - privacy_started_at,
+                6,
+            ),
+            "termination_reason":
+                "optimizer_step_contract_reached",
+            "checkpoint_steps":
+                sorted(privacy_checkpoint_steps),
+        }
+        privacy_telemetry_handle.write(
+            json.dumps(
+                privacy_end_record,
+                sort_keys=True,
+                allow_nan=False,
+            )
+            + "\\n"
+        )
+        privacy_telemetry_handle.flush()
+        privacy_telemetry_handle.close()
 '''
 
 
@@ -174,8 +270,14 @@ def _find_training_tail(tree: ast.Module) -> tuple[int, int]:
 def patch_runner_text(text: str) -> tuple[str, bool]:
     if MARKER in text:
         return text, False
+    if LEGACY_MARKER in text:
+        raise ValueError(
+            "BLOCKED_LEGACY_DIFFSYNTH_PATCH_PRESENT"
+        )
     if DOCKER_MARKER in text:
-        raise ValueError("BLOCKED_LEGACY_DIFFSYNTH_PATCH_PRESENT")
+        raise ValueError(
+            "BLOCKED_LEGACY_DIFFSYNTH_PATCH_PRESENT"
+        )
     tree = ast.parse(text)
     start_line, end_line = _find_training_tail(tree)
     lines = text.splitlines(keepends=True)

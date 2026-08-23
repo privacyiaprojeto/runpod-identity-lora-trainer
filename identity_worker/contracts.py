@@ -8,11 +8,15 @@ from .errors import WorkerError
 UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', re.I)
 SHA_RE = re.compile(r'^[0-9a-f]{64}$')
 CONTRACT_VERSION = 'privacy-identity-lora-training-v2'
+H2_CONTRACT_VERSION = 'privacy-identity-lora-training-v3'  # POD7C_H2_CONTRACT_V1
 PREVIEW_CONTRACT_VERSION = 'privacy-identity-lora-review-kit-v2'
 R2_PREFLIGHT_CONTRACT_VERSION = 'privacy-identity-lora-r2-preflight-v1'
 PREVIEW_VIDEO_KEY = 'video_walk_turn_smile'
 PREVIEW_IMAGE_KEYS = ('image_crying', 'image_sensual', 'image_lollipop')
 DIT_TRAINING_PROFILE = 'wan_dit_identity_video_v1'
+H2_TRAINING_PROFILE = 'wan_dit_identity_video_h2_v1'
+H2_WIDTH = 480
+H2_HEIGHT = 832
 DIT_TARGET_MODULES = ('cross_attn.q', 'cross_attn.k', 'cross_attn.v', 'cross_attn.o', 'ffn.0', 'ffn.2')
 DIT_OPTIMIZER_STEPS = 800
 DIT_CHECKPOINT_STEPS = (400, 600, 800)
@@ -52,7 +56,8 @@ class TrainingRequest:
 
 def parse_training_request(event: dict[str, Any]) -> TrainingRequest:
     payload = event.get('input') if isinstance(event.get('input'), dict) else event
-    if payload.get('contract_version') != CONTRACT_VERSION:
+    contract_version = payload.get('contract_version')
+    if contract_version not in (CONTRACT_VERSION, H2_CONTRACT_VERSION):
         raise WorkerError('UNSUPPORTED_CONTRACT', 'Contrato de treinamento incompatível.')
     if payload.get('execution_mode') != 'controlled_training_smoke':
         raise WorkerError('INVALID_EXECUTION_MODE', 'Modo de execução inválido.')
@@ -72,15 +77,44 @@ def parse_training_request(event: dict[str, Any]) -> TrainingRequest:
             raise WorkerError('PUBLIC_REFERENCE_FORBIDDEN', 'Somente referências privadas são aceitas.')
         if not SHA_RE.match(_text(sample.get('video_sha256')).lower()) or not SHA_RE.match(_text(sample.get('reference_image_sha256')).lower()):
             raise WorkerError('INVALID_ASSET_CHECKSUM', 'Checksum de material inválido.')
+    if contract_version == H2_CONTRACT_VERSION:
+        trigger_token = _text(
+            payload.get('trigger_token')
+        )
+
+        if not re.fullmatch(
+            r'prv_actor_[a-z0-9_]+',
+            trigger_token,
+        ):
+            raise WorkerError(
+                'H2_TRIGGER_TOKEN_INVALID',
+                'Trigger token H2 invalido.',
+            )
+
+        for sample in samples:
+            prompt = _text(
+                sample.get('prompt')
+            )
+
+            if (
+                not prompt or
+                trigger_token not in prompt
+            ):
+                raise WorkerError(
+                    'H2_PROMPT_TRIGGER_MISSING',
+                    'Todo sample H2 deve conter '
+                    'o trigger token no prompt.',
+                )
+
     model = payload.get('model') or {}
     if not SHA_RE.match(_text(model.get('fingerprint_sha256')).lower()) or len(model.get('artifacts') or []) != 9:
         raise WorkerError('INVALID_MODEL_LOCK', 'Lock do modelo-base inválido.')
 
     training = payload.get('training') or {}
     exact_training = {
-        'profile': DIT_TRAINING_PROFILE,
-        'width': 832,
-        'height': 480,
+        'profile': H2_TRAINING_PROFILE if contract_version == H2_CONTRACT_VERSION else DIT_TRAINING_PROFILE,
+        'width': H2_WIDTH if contract_version == H2_CONTRACT_VERSION else 832,
+        'height': H2_HEIGHT if contract_version == H2_CONTRACT_VERSION else 480,
         'num_frames': 17,
         'optimizer_steps': DIT_OPTIMIZER_STEPS,
         'num_epochs': 1,

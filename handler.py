@@ -13,6 +13,7 @@ import runpod
 from identity_worker.config import Settings
 from identity_worker.contracts import (
     CONTRACT_VERSION,
+    H2_CONTRACT_VERSION,
     PREVIEW_CONTRACT_VERSION,
     R2_PREFLIGHT_CONTRACT_VERSION,
     parse_preview_request,
@@ -21,6 +22,7 @@ from identity_worker.contracts import (
 )
 from identity_worker.dataset import materialize_dataset
 from identity_worker.errors import WorkerError
+from identity_worker.hashing import sha256_file
 from identity_worker.model_lock import materialize_model
 from identity_worker.model_preflight import assert_model_binding_compatible
 from identity_worker.one_shot import reserve_one_shot, reserve_preview_one_shot, update_one_shot
@@ -31,7 +33,7 @@ from identity_worker.r2_preflight import probe_private_r2_metadata
 from identity_worker.storage import client as r2_client, upload_private
 from identity_worker.telemetry import log_event
 from identity_worker.adapter_scope import collect_and_audit_checkpoints
-from identity_worker.trainer import build_command, run_training
+from identity_worker.trainer import build_command, load_training_telemetry, run_training
 
 settings = Settings()
 
@@ -103,101 +105,778 @@ def _assert_preview_scope(request) -> None:
 def _handle_training(event):
     lock_path: Path | None = None
     request = None
+
     try:
-        request = parse_training_request(event)
+        request = parse_training_request(
+            event
+        )
+
         settings.validate_runtime()
-        _assert_training_scope(request)
-        if request.output_bucket != settings.r2_bucket_name:
-            raise WorkerError('OUTPUT_BUCKET_MISMATCH', 'O destino não corresponde ao bucket privado configurado.')
-        for sample in request.payload['dataset']['samples']:
-            for field in ('video_source', 'reference_image_source'):
-                if sample[field]['bucket'] != settings.r2_bucket_name:
-                    raise WorkerError('SOURCE_BUCKET_MISMATCH', 'O material não pertence ao bucket privado configurado.')
+        _assert_training_scope(
+            request
+        )
 
-        runtime = assert_runtime_compatible(settings.diffsynth_root)
-        log_event('identity_training_runtime_ready', request_id=request.request_id, versions=runtime['versions'])
-        model_binding = materialize_model(request, settings)
-        model_probe = assert_model_binding_compatible(model_binding)
-        log_event('identity_training_model_binding_ready', request_id=request.request_id, model_name=model_probe['modelName'], model_hash=model_probe['modelHash'], diffusion_shard_count=model_probe['diffusionShardCount'])
+        if (
+            request.output_bucket !=
+            settings.r2_bucket_name
+        ):
+            raise WorkerError(
+                'OUTPUT_BUCKET_MISMATCH',
+                (
+                    'O destino não corresponde '
+                    'ao bucket privado configurado.'
+                ),
+            )
 
-        persistent_runtime = assert_persistent_runtime_root(settings.runtime_root)
+        for sample in (
+            request.payload[
+                'dataset'
+            ][
+                'samples'
+            ]
+        ):
+            for field in (
+                'video_source',
+                'reference_image_source',
+            ):
+                if (
+                    sample[field][
+                        'bucket'
+                    ]
+                    !=
+                    settings.r2_bucket_name
+                ):
+                    raise WorkerError(
+                        'SOURCE_BUCKET_MISMATCH',
+                        (
+                            'O material não pertence '
+                            'ao bucket privado configurado.'
+                        ),
+                    )
+
+        runtime = (
+            assert_runtime_compatible(
+                settings.diffsynth_root
+            )
+        )
+
+        log_event(
+            'identity_training_runtime_ready',
+            request_id=
+                request.request_id,
+            versions=
+                runtime['versions'],
+        )
+
+        model_binding = (
+            materialize_model(
+                request,
+                settings,
+            )
+        )
+
+        model_probe = (
+            assert_model_binding_compatible(
+                model_binding
+            )
+        )
+
+        log_event(
+            'identity_training_model_binding_ready',
+            request_id=
+                request.request_id,
+            model_name=
+                model_probe[
+                    'modelName'
+                ],
+            model_hash=
+                model_probe[
+                    'modelHash'
+                ],
+            diffusion_shard_count=
+                model_probe[
+                    'diffusionShardCount'
+                ],
+        )
+
+        persistent_runtime = (
+            assert_persistent_runtime_root(
+                settings.runtime_root
+            )
+        )
+
         log_event(
             'identity_training_persistent_runtime_ready',
-            request_id=request.request_id,
-            runtime_root=persistent_runtime['runtime_root'],
-            mount_point=persistent_runtime['mount_point'],
+            request_id=
+                request.request_id,
+            runtime_root=
+                persistent_runtime[
+                    'runtime_root'
+                ],
+            mount_point=
+                persistent_runtime[
+                    'mount_point'
+                ],
         )
-        lock_path = reserve_one_shot(settings.smoke_lock_root, request.actor_profile_id, request.training_run_id, request.request_id)
-        log_event('identity_training_smoke_reserved', request_id=request.request_id, actor_profile_id=request.actor_profile_id, training_run_id=request.training_run_id)
 
-        with tempfile.TemporaryDirectory(prefix=f'identity_{request.training_run_id}_') as temp:
-            work = Path(temp)
-            s3 = r2_client(settings)
-            update_one_shot(lock_path, 'materializing_dataset')
-            dataset_root, metadata_path = materialize_dataset(request, settings, work, s3)
-            output_dir = prepare_training_output_dir(
-                settings.runtime_root,
+        lock_path = reserve_one_shot(
+            settings.smoke_lock_root,
+            request.actor_profile_id,
+            request.training_run_id,
+            request.request_id,
+        )
+
+        log_event(
+            'identity_training_smoke_reserved',
+            request_id=
+                request.request_id,
+            actor_profile_id=
                 request.actor_profile_id,
+            training_run_id=
                 request.training_run_id,
+        )
+
+        with tempfile.TemporaryDirectory(
+            prefix=
+                f'identity_'
+                f'{request.training_run_id}_'
+        ) as temp:
+
+            work = Path(
+                temp
             )
-            output_relative = output_dir.relative_to(settings.runtime_root.resolve()).as_posix()
+
+            s3 = r2_client(
+                settings
+            )
+
+            update_one_shot(
+                lock_path,
+                'materializing_dataset',
+            )
+
+            (
+                dataset_root,
+                metadata_path,
+            ) = materialize_dataset(
+                request,
+                settings,
+                work,
+                s3,
+            )
+
+            output_dir = (
+                prepare_training_output_dir(
+                    settings.runtime_root,
+                    request.actor_profile_id,
+                    request.training_run_id,
+                )
+            )
+
+            contract_version = str(
+                request.payload[
+                    'contract_version'
+                ]
+            )
+
+            compiled_manifest = None
+
+            # H2 must preserve its exact compiled recipe
+            # BEFORE the temporary dataset directory disappears.
+            if (
+                contract_version ==
+                H2_CONTRACT_VERSION
+            ):
+                source_manifest = (
+                    dataset_root /
+                    'compiled_training_manifest.json'
+                )
+
+                source_sha_path = (
+                    dataset_root /
+                    'compiled_training_manifest.sha256'
+                )
+
+                if (
+                    not source_manifest.is_file()
+                    or
+                    not source_sha_path.is_file()
+                ):
+                    raise WorkerError(
+                        'H2_COMPILED_MANIFEST_MISSING',
+                        (
+                            'Compiled training manifest '
+                            'H2 ausente antes do treinamento.'
+                        ),
+                        retryable=False,
+                    )
+
+                declared_sha = (
+                    source_sha_path
+                    .read_text(
+                        encoding='ascii'
+                    )
+                    .strip()
+                    .lower()
+                )
+
+                actual_sha = (
+                    sha256_file(
+                        source_manifest
+                    )
+                )
+
+                if (
+                    len(declared_sha) != 64
+                    or
+                    declared_sha !=
+                    actual_sha
+                ):
+                    raise WorkerError(
+                        'H2_COMPILED_MANIFEST_SHA_MISMATCH',
+                        (
+                            'SHA do compiled training '
+                            'manifest H2 divergiu.'
+                        ),
+                        retryable=False,
+                    )
+
+                audit_dir = (
+                    output_dir /
+                    'audit'
+                )
+
+                audit_dir.mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
+
+                persistent_manifest = (
+                    audit_dir /
+                    'compiled_training_manifest.json'
+                )
+
+                persistent_manifest.write_bytes(
+                    source_manifest.read_bytes()
+                )
+
+                persistent_sha_path = (
+                    audit_dir /
+                    'compiled_training_manifest.sha256'
+                )
+
+                persistent_sha_path.write_text(
+                    actual_sha + '\n',
+                    encoding='ascii',
+                )
+
+                if (
+                    sha256_file(
+                        persistent_manifest
+                    )
+                    !=
+                    actual_sha
+                ):
+                    raise WorkerError(
+                        'H2_COMPILED_MANIFEST_PERSIST_FAILED',
+                        (
+                            'Compiled manifest H2 '
+                            'não foi persistido '
+                            'integralmente.'
+                        ),
+                        retryable=False,
+                    )
+
+                compiled_manifest = {
+                    'path':
+                        persistent_manifest,
+
+                    'sha256':
+                        actual_sha,
+
+                    'bytes':
+                        persistent_manifest
+                        .stat()
+                        .st_size,
+                }
+
+            output_relative = (
+                output_dir
+                .relative_to(
+                    settings
+                    .runtime_root
+                    .resolve()
+                )
+                .as_posix()
+            )
+
             update_one_shot(
                 lock_path,
                 'training',
                 persistentOutput=True,
-                checkpointRoot=output_relative,
+                checkpointRoot=
+                    output_relative,
+                compiledManifestSha256=(
+                    compiled_manifest[
+                        'sha256'
+                    ]
+                    if compiled_manifest
+                    is not None
+                    else None
+                ),
             )
-            adapter = run_training(build_command(request, settings, dataset_root, metadata_path, model_binding, output_dir), output_dir)
-            checkpoints = collect_and_audit_checkpoints(output_dir)
-            batch_id = uuid.uuid4().hex
-            update_one_shot(lock_path, 'uploading_adapter')
-            uploaded_checkpoints = []
-            for checkpoint in checkpoints:
-                checkpoint_path = checkpoint['path']
-                checkpoint_step = checkpoint['step']
-                key = f"{request.output_prefix.rstrip('/')}/{batch_id}/step-{checkpoint_step}.safetensors"
-                uploaded_checkpoint = upload_private(
-                    s3, checkpoint_path, request.output_bucket, key,
-                    {'private':'true','qa_required':'true','actor_profile_id':request.actor_profile_id,'training_run_id':request.training_run_id,'one_shot_smoke':'true','lora_base_model':'dit','checkpoint_step':str(checkpoint_step)},
+
+            adapter = run_training(
+                build_command(
+                    request,
+                    settings,
+                    dataset_root,
+                    metadata_path,
+                    model_binding,
+                    output_dir,
+                ),
+                output_dir,
+            )
+
+            telemetry = (
+                load_training_telemetry(
+                    output_dir
                 )
-                uploaded_checkpoints.append({**uploaded_checkpoint, 'step': checkpoint_step, 'tensor_count': checkpoint['tensor_count']})
-            uploaded = next(item for item in uploaded_checkpoints if item['step'] == 800)
-            update_one_shot(lock_path, 'completed', adapterSha256=uploaded['sha256'], adapterKey=uploaded['r2_key'], checkpointCount=len(uploaded_checkpoints))
+            )
+
+            checkpoints = (
+                collect_and_audit_checkpoints(
+                    output_dir
+                )
+            )
+
+            batch_id = (
+                uuid.uuid4().hex
+            )
+
+            update_one_shot(
+                lock_path,
+                'uploading_adapter',
+            )
+
+            # ----------------------------------------------------
+            # Private audit artifacts
+            # ----------------------------------------------------
+
+            compiled_manifest_uploaded = None
+
+            if (
+                compiled_manifest
+                is not None
+            ):
+                compiled_key = (
+                    f"{request.output_prefix.rstrip('/')}/"
+                    f"{batch_id}/audit/"
+                    "compiled_training_manifest.json"
+                )
+
+                compiled_upload = (
+                    upload_private(
+                        s3,
+                        compiled_manifest[
+                            'path'
+                        ],
+                        request.output_bucket,
+                        compiled_key,
+                        {
+                            'private':
+                                'true',
+
+                            'qa_required':
+                                'true',
+
+                            'actor_profile_id':
+                                request.actor_profile_id,
+
+                            'training_run_id':
+                                request.training_run_id,
+
+                            'contract_version':
+                                contract_version,
+
+                            'artifact_type':
+                                'compiled_training_manifest',
+                        },
+                    )
+                )
+
+                compiled_manifest_uploaded = {
+                    **compiled_upload,
+
+                    'schema_version':
+                        (
+                            'privacy-identity-'
+                            'compiled-training-'
+                            'manifest-v1'
+                        ),
+
+                    'sha256':
+                        compiled_manifest[
+                            'sha256'
+                        ],
+
+                    'bytes':
+                        compiled_manifest[
+                            'bytes'
+                        ],
+                }
+
+            telemetry_key = (
+                f"{request.output_prefix.rstrip('/')}/"
+                f"{batch_id}/audit/"
+                "training_telemetry.jsonl"
+            )
+
+            telemetry_upload = (
+                upload_private(
+                    s3,
+                    telemetry[
+                        'path'
+                    ],
+                    request.output_bucket,
+                    telemetry_key,
+                    {
+                        'private':
+                            'true',
+
+                        'qa_required':
+                            'true',
+
+                        'actor_profile_id':
+                            request.actor_profile_id,
+
+                        'training_run_id':
+                            request.training_run_id,
+
+                        'contract_version':
+                            contract_version,
+
+                        'artifact_type':
+                            'training_telemetry',
+                    },
+                )
+            )
+
+            telemetry_manifest = {
+                **telemetry_upload,
+
+                **{
+                    key: value
+                    for (
+                        key,
+                        value,
+                    )
+                    in telemetry.items()
+                    if key != 'path'
+                },
+            }
+
+            # ----------------------------------------------------
+            # Checkpoints 400 / 600 / 800
+            # ----------------------------------------------------
+
+            uploaded_checkpoints = []
+
+            for checkpoint in checkpoints:
+
+                checkpoint_path = (
+                    checkpoint[
+                        'path'
+                    ]
+                )
+
+                checkpoint_step = (
+                    checkpoint[
+                        'step'
+                    ]
+                )
+
+                key = (
+                    f"{request.output_prefix.rstrip('/')}/"
+                    f"{batch_id}/"
+                    f"step-{checkpoint_step}.safetensors"
+                )
+
+                checkpoint_metadata = {
+                    'private':
+                        'true',
+
+                    'qa_required':
+                        'true',
+
+                    'actor_profile_id':
+                        request.actor_profile_id,
+
+                    'training_run_id':
+                        request.training_run_id,
+
+                    'one_shot_smoke':
+                        'true',
+
+                    'lora_base_model':
+                        'dit',
+
+                    'checkpoint_step':
+                        str(
+                            checkpoint_step
+                        ),
+
+                    'contract_version':
+                        contract_version,
+                }
+
+                if (
+                    compiled_manifest
+                    is not None
+                ):
+                    checkpoint_metadata[
+                        'compiled_manifest_sha256'
+                    ] = (
+                        compiled_manifest[
+                            'sha256'
+                        ]
+                    )
+
+                uploaded_checkpoint = (
+                    upload_private(
+                        s3,
+                        checkpoint_path,
+                        request.output_bucket,
+                        key,
+                        checkpoint_metadata,
+                    )
+                )
+
+                uploaded_checkpoints.append(
+                    {
+                        **uploaded_checkpoint,
+
+                        'step':
+                            checkpoint_step,
+
+                        'tensor_count':
+                            checkpoint[
+                                'tensor_count'
+                            ],
+                    }
+                )
+
+            uploaded = next(
+                item
+                for item
+                in uploaded_checkpoints
+                if item['step'] == 800
+            )
+
+            completed_fields = {
+                'adapterSha256':
+                    uploaded[
+                        'sha256'
+                    ],
+
+                'adapterKey':
+                    uploaded[
+                        'r2_key'
+                    ],
+
+                'checkpointCount':
+                    len(
+                        uploaded_checkpoints
+                    ),
+
+                'telemetrySha256':
+                    telemetry_manifest[
+                        'sha256'
+                    ],
+
+                'telemetryStepCount':
+                    telemetry_manifest[
+                        'step_count'
+                    ],
+            }
+
+            if (
+                compiled_manifest_uploaded
+                is not None
+            ):
+                completed_fields[
+                    'compiledManifestSha256'
+                ] = (
+                    compiled_manifest_uploaded[
+                        'sha256'
+                    ]
+                )
+
+            update_one_shot(
+                lock_path,
+                'completed',
+                **completed_fields,
+            )
+
             return {
-                'contract_version': CONTRACT_VERSION,
-                'status': 'training_completed',
+                'contract_version':
+                    contract_version,
+
+                'status':
+                    'training_completed',
+
                 'adapter': {
                     **uploaded,
-                    'actor_profile_id': request.actor_profile_id,
-                    'training_run_id': request.training_run_id,
-                    'base_model_fingerprint': request.payload['model']['fingerprint_sha256'],
-                    'rank': request.payload['training']['lora_rank'],
-                    'alpha': request.payload['training']['lora_alpha'],
-                    'recommended_strength_model': 0.65,
-                    'consent_version': 'identity-preparation-v1',
+
+                    'actor_profile_id':
+                        request.actor_profile_id,
+
+                    'training_run_id':
+                        request.training_run_id,
+
+                    'base_model_fingerprint':
+                        request.payload[
+                            'model'
+                        ][
+                            'fingerprint_sha256'
+                        ],
+
+                    'rank':
+                        request.payload[
+                            'training'
+                        ][
+                            'lora_rank'
+                        ],
+
+                    'alpha':
+                        request.payload[
+                            'training'
+                        ][
+                            'lora_alpha'
+                        ],
+
+                    'recommended_strength_model':
+                        0.65,
+
+                    'consent_version':
+                        'identity-preparation-v1',
+
                     'manifest': {
-                        'dataset_manifest_sha256': request.payload['dataset_manifest_sha256'],
-                        'model_revision': request.payload['model']['revision'],
-                        'training_profile': request.payload['training']['profile'],
-                        'one_shot_smoke': True,
-                        'grouped_model_binding': True,
-                        'lora_base_model': 'dit',
-                        'remove_prefix_in_ckpt': 'pipe.dit.',
-                        'target_modules': request.payload['training']['target_modules'],
-                        'optimizer_steps': 800,
-                        'checkpoints': uploaded_checkpoints,
+                        'dataset_manifest_sha256':
+                            request.payload[
+                                'dataset_manifest_sha256'
+                            ],
+
+                        'compiled_training_manifest':
+                            compiled_manifest_uploaded,
+
+                        'training_telemetry':
+                            telemetry_manifest,
+
+                        'model_revision':
+                            request.payload[
+                                'model'
+                            ][
+                                'revision'
+                            ],
+
+                        'training_profile':
+                            request.payload[
+                                'training'
+                            ][
+                                'profile'
+                            ],
+
+                        'one_shot_smoke':
+                            True,
+
+                        'grouped_model_binding':
+                            True,
+
+                        'lora_base_model':
+                            'dit',
+
+                        'remove_prefix_in_ckpt':
+                            'pipe.dit.',
+
+                        'target_modules':
+                            request.payload[
+                                'training'
+                            ][
+                                'target_modules'
+                            ],
+
+                        'optimizer_steps':
+                            800,
+
+                        'checkpoints':
+                            uploaded_checkpoints,
                     },
                 },
             }
+
     except WorkerError as error:
+
         if lock_path is not None:
-            update_one_shot(lock_path, 'failed', errorCode=error.code, retryable=error.retryable)
-        log_event('identity_training_failed', request_id=getattr(request, 'request_id', None), error_code=error.code, retryable=error.retryable, one_shot_reserved=lock_path is not None)
-        raise RuntimeError(f'{error.code}: {error}') from error
+            update_one_shot(
+                lock_path,
+                'failed',
+                errorCode=
+                    error.code,
+                retryable=
+                    error.retryable,
+            )
+
+        log_event(
+            'identity_training_failed',
+            request_id=
+                getattr(
+                    request,
+                    'request_id',
+                    None,
+                ),
+            error_code=
+                error.code,
+            retryable=
+                error.retryable,
+            one_shot_reserved=
+                lock_path is not None,
+        )
+
+        raise RuntimeError(
+            f'{error.code}: {error}'
+        ) from error
+
     except Exception as error:
+
         if lock_path is not None:
-            update_one_shot(lock_path, 'failed', errorCode=type(error).__name__, retryable=False)
-        log_event('identity_training_failed', request_id=getattr(request, 'request_id', None), error_code=type(error).__name__, retryable=False, one_shot_reserved=lock_path is not None)
+            update_one_shot(
+                lock_path,
+                'failed',
+                errorCode=
+                    type(
+                        error
+                    ).__name__,
+                retryable=False,
+            )
+
+        log_event(
+            'identity_training_failed',
+            request_id=
+                getattr(
+                    request,
+                    'request_id',
+                    None,
+                ),
+            error_code=
+                type(
+                    error
+                ).__name__,
+            retryable=False,
+            one_shot_reserved=
+                lock_path is not None,
+        )
+
         raise
 
 
