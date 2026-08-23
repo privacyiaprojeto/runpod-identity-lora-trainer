@@ -38,6 +38,9 @@ RUN mkdir -p /runpod-volume/privacy-identity-lora /runpod-volume/models/identity
     && python -m compileall -q /app \
     && python -m identity_worker.runtime_preflight --diffsynth-root /opt/DiffSynth-Studio
 
+# Native POD transport reuses the same H2 training core.
+COPY pod_runner.py /app/pod_runner.py
+
 CMD ["python", "-u", "/app/handler.py"]
 
 # BEGIN D3_6H13_RAM_CACHE_CHECKPOINT_RESCUE_V1

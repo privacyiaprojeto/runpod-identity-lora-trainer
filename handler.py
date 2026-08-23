@@ -1074,11 +1074,16 @@ def handler(event):
     return _handle_training(event)
 
 
-log_event(
-    'runpod_serverless_start_enter',
-    runpod_sdk_version=RUNPOD_SDK_VERSION,
-    handler_name='handler',
-    transport_contract_version=TRANSPORT_SMOKE_CONTRACT_VERSION,
-    r2_preflight_contract_version=R2_PREFLIGHT_CONTRACT_VERSION,
-)
-runpod.serverless.start({'handler': handler})
+def _start_serverless_transport():
+    log_event(
+        'runpod_serverless_start_enter',
+        runpod_sdk_version=RUNPOD_SDK_VERSION,
+        handler_name='handler',
+        transport_contract_version=TRANSPORT_SMOKE_CONTRACT_VERSION,
+        r2_preflight_contract_version=R2_PREFLIGHT_CONTRACT_VERSION,
+    )
+    runpod.serverless.start({'handler': handler})
+
+
+if __name__ == '__main__':
+    _start_serverless_transport()
